@@ -85,6 +85,8 @@
 "remote.button.full.menu" = "Menu button";
 "remote.button.full.tv" = "TV button";
 "keyboard.key_code" = "Key %1$@";
+"keyboard.modifier.left" = "L";
+"keyboard.modifier.right" = "R";
 "keyboard.key.return" = "Return";
 "keyboard.key.tab" = "Tab";
 "keyboard.key.space" = "Space";

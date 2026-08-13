@@ -110,6 +110,34 @@ enum KeyboardInjector {
         )
     }
 
+    /// Sends a recorded shortcut. When a physical side was recorded, the real
+    /// side-specific modifier keys are held around the main key so tools that
+    /// require e.g. the right Command actually see it; a plain flags-only event
+    /// cannot express the side. Modifiers are always released in reverse order.
+    static func postShortcut(
+        _ shortcut: CustomKeyboardShortcut,
+        keyPoster: KeyPoster,
+        keyStatePoster: KeyStatePoster
+    ) {
+        let flags = shortcut.cgEventFlags
+        let modifierCodes = shortcut.sideSpecificModifierKeyCodes
+        guard !modifierCodes.isEmpty else {
+            keyPoster(CGKeyCode(shortcut.keyCode), flags)
+            return
+        }
+        var pressed: [CGKeyCode] = []
+        defer {
+            for code in pressed.reversed() {
+                _ = keyStatePoster(code, false, [])
+            }
+        }
+        for code in modifierCodes {
+            guard keyStatePoster(code, true, flags) else { return }
+            pressed.append(code)
+        }
+        keyPoster(CGKeyCode(shortcut.keyCode), flags)
+    }
+
     @discardableResult
     static func send(
         _ action: ButtonAction,
@@ -127,7 +155,8 @@ enum KeyboardInjector {
         customApplicationOpener: CustomApplicationOpener = openCustomApplication,
         customApplicationFocuser: @escaping CustomApplicationFocuser = focusCustomApplication,
         accessibilityTrusted: () -> Bool = { isAccessibilityTrusted },
-        keyPoster: KeyPoster = { postKey(code: $0, flags: $1) }
+        keyPoster: KeyPoster = { postKey(code: $0, flags: $1) },
+        keyStatePoster: KeyStatePoster = postKeyState
     ) -> Bool {
         guard action != .disabled else { return true }
         if action.isAppInternal {
@@ -227,7 +256,7 @@ enum KeyboardInjector {
             keyPoster(124, .maskCommand)
         case .customShortcut:
             if let shortcut {
-                keyPoster(CGKeyCode(shortcut.keyCode), shortcut.cgEventFlags)
+                postShortcut(shortcut, keyPoster: keyPoster, keyStatePoster: keyStatePoster)
             }
         case .openCustomApplication:
             break
@@ -370,7 +399,11 @@ enum KeyboardInjector {
                     return
                 case .keyboardShortcut:
                     if let shortcut = application.focusShortcut {
-                        postKey(code: CGKeyCode(shortcut.keyCode), flags: shortcut.cgEventFlags)
+                        postShortcut(
+                            shortcut,
+                            keyPoster: { postKey(code: $0, flags: $1) },
+                            keyStatePoster: postKeyState
+                        )
                         AppLogger.shared.write(
                             "APP FOCUS succeeded bundle=\(application.bundleIdentifier) " +
                                 "method=custom_shortcut"

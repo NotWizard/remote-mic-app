@@ -85,6 +85,8 @@
 "remote.button.full.menu" = "菜单键";
 "remote.button.full.tv" = "TV 键";
 "keyboard.key_code" = "按键 %1$@";
+"keyboard.modifier.left" = "左";
+"keyboard.modifier.right" = "右";
 "keyboard.key.return" = "Return（回车）";
 "keyboard.key.tab" = "Tab（制表）";
 "keyboard.key.space" = "Space（空格）";

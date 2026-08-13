@@ -198,6 +198,7 @@
   - [ ] 仍需在已启用 Spotlight 快捷键的真实桌面会话中确认 Spotlight 不弹出、页面显示“快捷键录入成功”，并用真实遥控器验证保存后的动作能够唤起 Spotlight；完成该人工验收后再勾选本条。
 - [ ] 支持将单独的 Left/Right Option 等修饰键录入为快捷键
   - 当前快捷键录入器只监听普通 `keyDown`，而单独按下 Option、Command、Control 或 Shift 产生的是 `flagsChanged`，因此组合键可以录入，单独修饰键无法录入。
+  - [x] 组合键的左右侧已保真：录制保留设备相关位，注入时按下真实侧别修饰键（右⌘=54、右⌥=61、右⇧=60、右⌃=62；左侧 55/58/56/59）并逆序释放，界面显示“左/右”。旧配置（无侧别）继续走原 flags-only 路径。详见 [`Bugs/2026-08-13-custom-shortcut-loses-modifier-side.md`](Bugs/2026-08-13-custom-shortcut-loses-modifier-side.md) 与 [`Testing/CustomShortcutModifierSide.md`](Testing/CustomShortcutModifierSide.md)；待真机验收。
   - 实现时需要等待修饰键释放以区分“单独修饰键”和“修饰键 + 普通键”，保留左右侧键码，并在合成按键时可靠清除释放事件的修饰标志，避免修饰键卡住；需覆盖单独 Left/Right Option 及现有组合快捷键回归。
 - [ ] 支持通过遥控器完整操作 macOS `Command + Tab` 应用切换器（仅记录，暂不开发）
   - 用户触发配置的应用切换动作后显示系统 `Command + Tab` 切换器；切换器显示期间，遥控器左右方向键只移动当前 App 选项，按“确定 / OK”确认并切换到所选 App。

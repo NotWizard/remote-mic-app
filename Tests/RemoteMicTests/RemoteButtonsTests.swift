@@ -349,6 +349,92 @@ struct RemoteButtonsTests {
         #expect(posted == nil)
     }
 
+    @Test func rightSideModifierIsPreservedAndDisplayed() {
+        let localization = LocalizationStore(settings: AppSettings(defaults: .standard))
+        // 0x10 is the device-dependent right Command bit reported by real hardware.
+        let rightCommand = NSEvent.ModifierFlags(rawValue: 0x0000_0010)
+        let shortcut = CustomKeyboardShortcut(
+            keyCode: 43,
+            modifierFlags: [.command, rightCommand],
+            keyLabel: ","
+        )
+
+        #expect(shortcut.modifierFlagsRawValue & 0x0000_0010 != 0)
+        #expect(shortcut.sideSpecificModifierKeyCodes == [54])
+        #expect(shortcut.cgEventFlags.rawValue & 0x0000_0010 != 0)
+        #expect(shortcut.cgEventFlags.contains(.maskCommand))
+        #expect(shortcut.displayName(using: localization).contains("⌘"))
+    }
+
+    @Test func sideSpecificShortcutHoldsRealModifierAndReleasesInReverse() {
+        let rightCommand = NSEvent.ModifierFlags(rawValue: 0x0000_0010)
+        let rightShift = NSEvent.ModifierFlags(rawValue: 0x0000_0004)
+        let shortcut = CustomKeyboardShortcut(
+            keyCode: 43,
+            modifierFlags: [.command, .shift, rightCommand, rightShift],
+            keyLabel: ","
+        )
+        var events: [String] = []
+
+        KeyboardInjector.postShortcut(
+            shortcut,
+            keyPoster: { code, _ in events.append("key:\(code)") },
+            keyStatePoster: { code, isDown, _ in
+                events.append("\(isDown ? "down" : "up"):\(code)")
+                return true
+            }
+        )
+
+        // Shift (60) then Command (54) held, main key, then released in reverse.
+        #expect(events == ["down:60", "down:54", "key:43", "up:54", "up:60"])
+    }
+
+    @Test func failedModifierPressStillReleasesWhatWasHeld() {
+        let rightCommand = NSEvent.ModifierFlags(rawValue: 0x0000_0010)
+        let rightShift = NSEvent.ModifierFlags(rawValue: 0x0000_0004)
+        let shortcut = CustomKeyboardShortcut(
+            keyCode: 43,
+            modifierFlags: [.command, .shift, rightCommand, rightShift],
+            keyLabel: ","
+        )
+        var events: [String] = []
+
+        KeyboardInjector.postShortcut(
+            shortcut,
+            keyPoster: { code, _ in events.append("key:\(code)") },
+            keyStatePoster: { code, isDown, _ in
+                events.append("\(isDown ? "down" : "up"):\(code)")
+                return code == 60 // the second modifier fails
+            }
+        )
+
+        // The main key is skipped, and the already-held modifier is still released.
+        #expect(events == ["down:60", "down:54", "up:60"])
+    }
+
+    @Test func legacyShortcutWithoutSideKeepsFlagsOnlyInjection() {
+        let shortcut = CustomKeyboardShortcut(
+            keyCode: 43,
+            modifierFlags: [.command],
+            keyLabel: ","
+        )
+        var events: [String] = []
+
+        #expect(shortcut.sideSpecificModifierKeyCodes.isEmpty)
+        KeyboardInjector.postShortcut(
+            shortcut,
+            keyPoster: { code, flags in
+                events.append("key:\(code):\(flags.rawValue)")
+            },
+            keyStatePoster: { _, _, _ in
+                events.append("unexpected")
+                return true
+            }
+        )
+
+        #expect(events == ["key:43:\(CGEventFlags.maskCommand.rawValue)"])
+    }
+
     @Test func fixedCompoundShortcutsPostExpectedKeyCodesAndModifiers() {
         let expected: [(ButtonAction, CGKeyCode, CGEventFlags)] = [
             (.commandReturn, 36, .maskCommand),
