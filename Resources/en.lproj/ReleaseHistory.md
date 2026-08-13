@@ -1,5 +1,10 @@
 # Version History
 
+## 1.8.15 (Pre-release)
+
+- Fixed the voice trigger key sometimes sticking when set to Right Command/Option/Shift (which could prevent stopping, toggle VoiceOver, or make the system laggy). The modifier is now injected as a press/release tied to the start/stop of speech, and is always released on disconnect, quit, or switching the trigger key.
+- Using a right-side modifier as the trigger key requires Accessibility permission; without it the voice button no longer causes those side effects and will prompt for authorization.
+
 ## 1.8.14 (Pre-release)
 
 - The voice button's trigger key is now selectable: Fn (default, compatible with Doubao and system dictation), Right Command, Right Option, or Right Shift, so it can drive third-party voice apps that start on a right-side modifier.
