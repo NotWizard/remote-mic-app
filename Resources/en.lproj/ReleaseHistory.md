@@ -1,5 +1,9 @@
 # Version History
 
+## 1.8.17 (Pre-release)
+
+- Fixed how custom-shortcut modifiers are injected: they were sent as ordinary key presses that did not actually change the system modifier state, so a shortcut could both trigger the target tool and leak to the frontmost app (for example opening DingTalk's settings). Modifiers are now sent as real modifier-state changes, matching a physical keypress.
+
 ## 1.8.16 (Pre-release)
 
 - Fixed custom shortcuts losing which side of a modifier was pressed. Recording something like "Right Command + comma" was stored as a plain Command, so third-party tools that distinguish the left and right keys never responded. The side is now preserved, the matching physical modifier is held when the shortcut is sent, and the shortcut display shows L/R.
