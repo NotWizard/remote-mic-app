@@ -46,6 +46,15 @@ enum RemoteVoiceFunctionMappingPolicy {
         destination: 0x0
     )
 
+    // The voice key (F5 source) can be remapped to Fn (default) or a right-side
+    // modifier so third-party dictation tools with different push-to-talk keys work.
+    static func voiceMapping(for trigger: VoiceTriggerKey) -> HIDUsageMapping {
+        HIDUsageMapping(
+            source: remoteVoiceKey.source,
+            destination: trigger.hidDestinationUsage
+        )
+    }
+
     // RC003 exposes its power button as keyboard Power (usage 0x66).
     // Remap it to harmless F20 before macOS can turn it into a sleep event.
     static let suppressedRemotePowerKey = HIDUsageMapping(
@@ -135,7 +144,8 @@ final class RemoteVoiceFunctionMapper {
     @discardableResult
     func apply(
         suppressPowerKey: Bool = false,
-        neutralizeVoiceKey: Bool = false
+        neutralizeVoiceKey: Bool = false,
+        trigger: VoiceTriggerKey = .fn
     ) -> Bool {
         let services = serviceProvider()
         let matchedCount = services.count
@@ -190,7 +200,7 @@ final class RemoteVoiceFunctionMapper {
                 to: current,
                 voiceMapping: neutralizeVoiceKey
                     ? RemoteVoiceFunctionMappingPolicy.neutralRemoteVoiceKey
-                    : RemoteVoiceFunctionMappingPolicy.remoteVoiceKey,
+                    : RemoteVoiceFunctionMappingPolicy.voiceMapping(for: trigger),
                 powerMapping: suppressPowerKey
                     ? RemoteVoiceFunctionMappingPolicy.suppressedRemotePowerKey
                     : originalMappings[registryID]?.power

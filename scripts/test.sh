@@ -17,6 +17,7 @@ xcrun swiftc \
   "$ROOT/Sources/RemoteMic/VoiceFunctionKeyLatch.swift" \
   "$ROOT/Sources/RemoteMic/VoiceInputDestinationCoordinator.swift" \
   "$ROOT/Sources/RemoteMic/VoiceFnTapSessionController.swift" \
+  "$ROOT/Sources/RemoteMic/VoiceTriggerKey.swift" \
   "$ROOT/Sources/RemoteMic/RemoteVoiceFunctionMapper.swift" \
   "$ROOT/Sources/RemoteMic/AppLogger.swift" \
   "$ROOT/Sources/RemoteMic/TestTone.swift" \

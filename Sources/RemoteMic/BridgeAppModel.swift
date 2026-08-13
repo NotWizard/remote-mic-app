@@ -66,7 +66,12 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         destinationReadiness: { [weak self] completion in
             self?.voiceInputDestinationCoordinator.waitUntilReady(completion: completion) ?? .immediate
         },
-        setFunctionKeyPressed: { KeyboardInjector.setFunctionKeyPressed($0) },
+        setFunctionKeyPressed: { [weak self] in
+            KeyboardInjector.setFunctionKeyPressed(
+                $0,
+                trigger: self?.settings.voiceTriggerKey ?? .fn
+            )
+        },
         enqueueAudio: { [weak self] samples in
             _ = self?.audioOutput.enqueue(samples: samples)
         },
@@ -765,7 +770,10 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
             stopLongRecording(reason: "feature_disabled")
         }
 
-        let requestedFnTapMode = settings.voiceFnTapModeEnabled
+        let requestedFnTapMode = VoiceKeyModePolicy.usesFnTapInjection(
+            fnTapEnabled: settings.voiceFnTapModeEnabled,
+            usesRemoteMicrophone: settings.voiceKeyUsesRemoteMicrophone
+        )
         if !requestedFnTapMode, voiceFnTapSession.requiresCleanupBeforeMapping {
             voiceFnTapSession.setEnabled(false) { [weak self] in
                 self?.applyHIDSettings()
@@ -921,6 +929,26 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         voiceFnTapSession.setEnabled(false) { [weak self] in
             self?.applyHIDSettings()
         }
+    }
+
+    func setVoiceTriggerKey(_ trigger: VoiceTriggerKey) {
+        guard settings.voiceTriggerKey != trigger else { return }
+        settings.voiceTriggerKey = trigger
+        AppLogger.shared.write("VOICE TRIGGER key=\(trigger.rawValue)")
+        applyHIDSettings()
+    }
+
+    func setVoiceKeyUsesRemoteMicrophone(_ enabled: Bool) {
+        guard settings.voiceKeyUsesRemoteMicrophone != enabled else { return }
+        settings.voiceKeyUsesRemoteMicrophone = enabled
+        AppLogger.shared.write("VOICE REMOTE_MIC enabled=\(enabled)")
+        if !enabled, bluetoothVoiceActive {
+            activeBluetoothVoiceDeviceIdentifier = nil
+            bluetoothVoiceActive = false
+            _ = voiceFnTapSession.stopVoice()
+            endVoiceSessionIfNeeded()
+        }
+        applyHIDSettings()
     }
 
     private func enableVoiceFnTapMode() {
@@ -1144,6 +1172,13 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
     }
 
     func bluetoothBridgeDidStartVoice(_ bridge: XiaomiBluetoothBridge) {
+        // Pure-trigger mode: the trigger key is emitted by the independent IOKit
+        // hardware remap, so we ignore the remote's audio. Returning before setting
+        // activeBluetoothVoiceDeviceIdentifier makes didDecode/didStopVoice no-op.
+        guard settings.voiceKeyUsesRemoteMicrophone else {
+            AppLogger.shared.write("ATVV STREAM trigger_only")
+            return
+        }
         guard let identifier = bridge.deviceIdentifier else { return }
         let profileID = activateRemoteProfile(for: bridge)
         if let activeBluetoothVoiceDeviceIdentifier,
@@ -1850,7 +1885,8 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
     private func applyVoiceFunctionMapping(neutralizeVoiceKey: Bool) -> Bool {
         let applied = voiceFunctionMapper.apply(
             suppressPowerKey: settings.customMappingEnabled,
-            neutralizeVoiceKey: neutralizeVoiceKey
+            neutralizeVoiceKey: neutralizeVoiceKey,
+            trigger: settings.voiceTriggerKey
         )
         if !isStreaming {
             isVoiceTriggerEnabled = applied
@@ -1867,7 +1903,10 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
             return true
         }
         let shouldHold = transition == .press
-        guard KeyboardInjector.setFunctionKeyPressed(shouldHold) else {
+        guard KeyboardInjector.setFunctionKeyPressed(
+            shouldHold,
+            trigger: settings.voiceTriggerKey
+        ) else {
             phoneVoiceFunctionKeyLatch.rollback(transition)
             AppLogger.shared.write(
                 "PHONE VOICE FN \(shouldHold ? "DOWN" : "UP") failed"

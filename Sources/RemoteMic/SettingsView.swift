@@ -793,6 +793,7 @@ struct SettingsView: View {
                             selectedButton: $selectedRemoteButton,
                             activeButtons: model.activeRemoteButtons,
                             voiceActive: model.isStreaming,
+                            voiceTrigger: settings.voiceTriggerKey,
                             actionSummary: mappingActionSummary,
                             onEdit: { button, trigger in
                                 selectedRemoteButton = button
@@ -810,6 +811,8 @@ struct SettingsView: View {
                                 isLocked: isMappingSelectionLocked
                             )
                         }
+
+                        voiceTriggerPanel
 
                         if let target = mappingEditingTarget {
                             mappingEditorPanel(target)
@@ -892,6 +895,44 @@ struct SettingsView: View {
         }
     }
 
+    private var voiceTriggerPanel: some View {
+        GlassPanel {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "mic.fill")
+                        .frame(width: 14)
+                    Text("button_mapping.voice_trigger.title")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                Toggle("button_mapping.voice_trigger.use_remote_mic", isOn: Binding(
+                    get: { settings.voiceKeyUsesRemoteMicrophone },
+                    set: { model.setVoiceKeyUsesRemoteMicrophone($0) }
+                ))
+                .font(.system(size: 12, weight: .medium))
+                .toggleStyle(.switch)
+                Picker("button_mapping.voice_trigger.title", selection: Binding(
+                    get: { settings.voiceTriggerKey },
+                    set: { model.setVoiceTriggerKey($0) }
+                )) {
+                    ForEach(VoiceTriggerKey.allCases, id: \.self) { trigger in
+                        Text(LocalizedStringKey(trigger.titleKey)).tag(trigger)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                Text(LocalizedStringKey(
+                    settings.voiceKeyUsesRemoteMicrophone
+                        ? "button_mapping.voice_trigger.mode_hint_on"
+                        : "button_mapping.voice_trigger.mode_hint_off"
+                ))
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     private var mappingFooter: some View {
         GlassPanel {
             HStack(spacing: 16) {
@@ -925,6 +966,7 @@ struct SettingsView: View {
                     ))
                     .font(.system(size: 12, weight: .medium))
                     .toggleStyle(.switch)
+                    .disabled(!settings.voiceKeyUsesRemoteMicrophone)
                     Text("connection.voice_fn_tap.hint_short")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)

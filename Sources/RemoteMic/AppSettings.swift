@@ -22,6 +22,8 @@ private struct PersonalizedConfiguration: Codable {
     let checksForPreReleaseUpdates: Bool?
     let experimentalContinuousRecordingEnabled: Bool?
     let voiceFnTapModeEnabled: Bool?
+    let voiceTriggerKey: String?
+    let voiceKeyUsesRemoteMicrophone: Bool?
     let continuousRecordingPowerBindingBackup: ConfiguredButtonAction?
 }
 
@@ -241,6 +243,8 @@ final class AppSettings: ObservableObject {
         static let checksForPreReleaseUpdates = "checksForPreReleaseUpdates"
         static let experimentalContinuousRecordingEnabled = "experimentalContinuousRecordingEnabled"
         static let voiceFnTapModeEnabled = "voiceFnTapModeEnabled"
+        static let voiceTriggerKey = "voiceTriggerKey"
+        static let voiceKeyUsesRemoteMicrophone = "voiceKeyUsesRemoteMicrophone"
         static let continuousRecordingPowerBindingBackup = "continuousRecordingPowerBindingBackup"
         static let lastLaunchedBuild = "launch.lastLaunchedBuild"
         static let totalButtonPressCount = "usage.totalButtonPressCount"
@@ -341,6 +345,18 @@ final class AppSettings: ObservableObject {
                 voiceFnTapModeEnabled,
                 forKey: Keys.voiceFnTapModeEnabled
             )
+        }
+    }
+
+    @Published var voiceTriggerKey: VoiceTriggerKey {
+        didSet {
+            defaults.set(voiceTriggerKey.rawValue, forKey: Keys.voiceTriggerKey)
+        }
+    }
+
+    @Published var voiceKeyUsesRemoteMicrophone: Bool {
+        didSet {
+            defaults.set(voiceKeyUsesRemoteMicrophone, forKey: Keys.voiceKeyUsesRemoteMicrophone)
         }
     }
 
@@ -503,6 +519,11 @@ final class AppSettings: ObservableObject {
         voiceFnTapModeEnabled = defaults.bool(
             forKey: Keys.voiceFnTapModeEnabled
         )
+        voiceTriggerKey = defaults.string(forKey: Keys.voiceTriggerKey)
+            .flatMap(VoiceTriggerKey.init(rawValue:)) ?? .fn
+        voiceKeyUsesRemoteMicrophone = defaults.object(forKey: Keys.voiceKeyUsesRemoteMicrophone) == nil
+            ? true
+            : defaults.bool(forKey: Keys.voiceKeyUsesRemoteMicrophone)
         continuousRecordingPowerBindingBackup = defaults
             .data(forKey: Keys.continuousRecordingPowerBindingBackup)
             .flatMap { try? JSONDecoder().decode(ConfiguredButtonAction.self, from: $0) }
@@ -1170,6 +1191,8 @@ final class AppSettings: ObservableObject {
             checksForPreReleaseUpdates: checksForPreReleaseUpdates,
             experimentalContinuousRecordingEnabled: experimentalContinuousRecordingEnabled,
             voiceFnTapModeEnabled: voiceFnTapModeEnabled,
+            voiceTriggerKey: voiceTriggerKey.rawValue,
+            voiceKeyUsesRemoteMicrophone: voiceKeyUsesRemoteMicrophone,
             continuousRecordingPowerBindingBackup: continuousRecordingPowerBindingBackup
         )
         let encoder = JSONEncoder()
@@ -1231,6 +1254,9 @@ final class AppSettings: ObservableObject {
             self.checksForPreReleaseUpdates = checksForPreReleaseUpdates
         }
         voiceFnTapModeEnabled = configuration.voiceFnTapModeEnabled ?? false
+        voiceTriggerKey = configuration.voiceTriggerKey
+            .flatMap(VoiceTriggerKey.init(rawValue:)) ?? .fn
+        voiceKeyUsesRemoteMicrophone = configuration.voiceKeyUsesRemoteMicrophone ?? true
         applyContinuousRecordingExperimentState(
             enabled: configuration.experimentalContinuousRecordingEnabled ?? false,
             backup: configuration.continuousRecordingPowerBindingBackup

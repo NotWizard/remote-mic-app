@@ -98,14 +98,15 @@ enum KeyboardInjector {
     @discardableResult
     static func setFunctionKeyPressed(
         _ isPressed: Bool,
+        trigger: VoiceTriggerKey = .fn,
         accessibilityTrusted: () -> Bool = { isAccessibilityTrusted },
         keyStatePoster: KeyStatePoster = postKeyState
     ) -> Bool {
         guard accessibilityTrusted() else { return false }
         return keyStatePoster(
-            functionKeyCode,
+            trigger.injectionKeyCode,
             isPressed,
-            isPressed ? .maskSecondaryFn : []
+            isPressed ? trigger.injectionFlags : []
         )
     }
 

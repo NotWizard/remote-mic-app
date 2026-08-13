@@ -94,6 +94,7 @@ struct RemoteMappingCanvas: View {
     @Binding var selectedButton: RemoteButton
     let activeButtons: Set<RemoteButton>
     let voiceActive: Bool
+    let voiceTrigger: VoiceTriggerKey
     let actionSummary: (RemoteButton, ButtonTrigger) -> String
     let onEdit: (RemoteButton, ButtonTrigger) -> Void
 
@@ -272,7 +273,7 @@ struct RemoteMappingCanvas: View {
                 Text("button_mapping.voice_button.title")
                     .font(.system(size: 13, weight: .semibold))
                 Spacer(minLength: 0)
-                Text("button_mapping.voice_button.fixed")
+                Text(LocalizedStringKey(voiceTrigger.titleKey))
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(voiceActive ? Color.orange : Color.secondary)
                     .padding(.horizontal, 6)

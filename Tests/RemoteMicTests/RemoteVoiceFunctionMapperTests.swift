@@ -187,6 +187,33 @@ struct RemoteVoiceFunctionMapperTests {
 
         #expect(ownerReference.value == nil)
     }
+
+    @Test func voiceMappingResolvesTheSelectedTriggerDestination() {
+        #expect(
+            RemoteVoiceFunctionMappingPolicy.voiceMapping(for: .fn)
+                == RemoteVoiceFunctionMappingPolicy.remoteVoiceKey
+        )
+        #expect(RemoteVoiceFunctionMappingPolicy.voiceMapping(for: .rightCommand) == HIDUsageMapping(
+            source: RemoteVoiceFunctionMappingPolicy.remoteVoiceKey.source,
+            destination: 0x0000_0007_0000_00E7
+        ))
+    }
+
+    @Test func applyRemapsVoiceKeyToTheSelectedTrigger() {
+        let box = MappingServiceBox(registryID: 1, mappings: [])
+        let mapper = RemoteVoiceFunctionMapper { [box.service] }
+
+        #expect(mapper.apply(trigger: .rightShift))
+        #expect(box.mappings == [RemoteVoiceFunctionMappingPolicy.voiceMapping(for: .rightShift)])
+    }
+
+    @Test func defaultApplyStillEmitsHardwareFn() {
+        let box = MappingServiceBox(registryID: 1, mappings: [])
+        let mapper = RemoteVoiceFunctionMapper { [box.service] }
+
+        #expect(mapper.apply())
+        #expect(box.mappings == [RemoteVoiceFunctionMappingPolicy.remoteVoiceKey])
+    }
 }
 
 private final class MappingServiceOwner {}
