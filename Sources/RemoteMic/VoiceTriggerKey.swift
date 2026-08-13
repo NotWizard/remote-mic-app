@@ -49,13 +49,42 @@ enum VoiceTriggerKey: String, CaseIterable, Codable {
         case .rightShift: return "button_mapping.voice_trigger.right_shift"
         }
     }
+
+    /// Right-side modifiers are real modifiers; Fn is the Apple Globe/Fn usage.
+    var isModifier: Bool { self != .fn }
 }
 
 enum VoiceKeyModePolicy {
+    /// Right-side modifier triggers are emitted by software injection tied to the
+    /// ATVV stream (down on start, up on stop), never by a hardware key remap: a
+    /// remapped modifier that misses a key-up gets stuck (a stuck Command toggles
+    /// VoiceOver via Command-F5, makes the system laggy, and never cleanly releases).
+    static func usesModifierHoldInjection(trigger: VoiceTriggerKey) -> Bool {
+        trigger.isModifier
+    }
+
     /// Fn-tap (Typeless) injection is driven by the remote's audio draining, so it
-    /// only makes sense when the voice key streams the remote microphone. When the
-    /// voice key is a pure trigger (external mic), force the hardware-remap path.
-    static func usesFnTapInjection(fnTapEnabled: Bool, usesRemoteMicrophone: Bool) -> Bool {
-        fnTapEnabled && usesRemoteMicrophone
+    /// only applies to the Fn trigger while streaming the remote microphone.
+    static func usesFnTapInjection(
+        fnTapEnabled: Bool,
+        usesRemoteMicrophone: Bool,
+        trigger: VoiceTriggerKey
+    ) -> Bool {
+        fnTapEnabled && usesRemoteMicrophone && !trigger.isModifier
+    }
+
+    /// The hardware F5 key must be neutralized (F5→0) whenever the trigger is
+    /// emitted by injection instead of a hardware remap.
+    static func neutralizesHardwareVoiceKey(
+        fnTapEnabled: Bool,
+        usesRemoteMicrophone: Bool,
+        trigger: VoiceTriggerKey
+    ) -> Bool {
+        usesModifierHoldInjection(trigger: trigger)
+            || usesFnTapInjection(
+                fnTapEnabled: fnTapEnabled,
+                usesRemoteMicrophone: usesRemoteMicrophone,
+                trigger: trigger
+            )
     }
 }

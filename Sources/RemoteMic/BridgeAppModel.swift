@@ -88,6 +88,7 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
     )
     private var testToneGeneration = 0
     private var phoneVoiceFunctionKeyLatch = VoiceFunctionKeyLatch()
+    private var bluetoothVoiceTriggerLatch = VoiceFunctionKeyLatch()
     private var voiceSessionStartedAt: Date?
     private var voiceSessionUsageSource: UsageEventSource?
     private var bluetoothVoiceActive = false
@@ -307,6 +308,7 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         activeMobileVoiceSource = nil
         voiceSessionUsageSource = nil
         updatePhoneVoiceFunctionKeyState(streaming: false)
+        updateBluetoothVoiceTriggerKey(streaming: false)
         stopHIDMonitors()
         isAudioOutputReady = false
         virtualAudioReleaseGeneration &+= 1
@@ -770,31 +772,43 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
             stopLongRecording(reason: "feature_disabled")
         }
 
-        let requestedFnTapMode = VoiceKeyModePolicy.usesFnTapInjection(
+        let trigger = settings.voiceTriggerKey
+        let wantsFnTap = VoiceKeyModePolicy.usesFnTapInjection(
             fnTapEnabled: settings.voiceFnTapModeEnabled,
-            usesRemoteMicrophone: settings.voiceKeyUsesRemoteMicrophone
+            usesRemoteMicrophone: settings.voiceKeyUsesRemoteMicrophone,
+            trigger: trigger
         )
-        if !requestedFnTapMode, voiceFnTapSession.requiresCleanupBeforeMapping {
+        let wantsModifierInjection = VoiceKeyModePolicy.usesModifierHoldInjection(trigger: trigger)
+        if !wantsFnTap, voiceFnTapSession.requiresCleanupBeforeMapping {
             voiceFnTapSession.setEnabled(false) { [weak self] in
                 self?.applyHIDSettings()
             }
             return
         }
-        requestNextHIDPermissionIfNeeded(voiceFnTapModeRequested: requestedFnTapMode)
+        // Release any injected modifier before rewriting the HID mapping.
+        updateBluetoothVoiceTriggerKey(streaming: false)
+        requestNextHIDPermissionIfNeeded(
+            voiceFnTapModeRequested: wantsFnTap || wantsModifierInjection
+        )
         var powerKeySuppressed: Bool
-        if requestedFnTapMode, KeyboardInjector.isAccessibilityTrusted {
+        if wantsFnTap, !KeyboardInjector.isAccessibilityTrusted {
+            // Fn-tap needs Accessibility; without it fall back to the hardware Fn hold.
+            settings.voiceFnTapModeEnabled = false
+            voiceFnTapSession.setEnabled(false)
+            powerKeySuppressed = applyVoiceFunctionMapping(neutralizeVoiceKey: false)
+        } else if wantsFnTap || wantsModifierInjection {
+            // Injection modes neutralize the hardware F5 so it never emits on its own;
+            // a modifier trigger is then injected as a held key tied to the ATVV stream
+            // and Fn-tap injects taps. This avoids a stuck hardware-remapped modifier.
             powerKeySuppressed = applyVoiceFunctionMapping(neutralizeVoiceKey: true)
             if voiceFunctionMapper.isVoiceKeyNeutralized {
-                voiceFnTapSession.setEnabled(true)
+                voiceFnTapSession.setEnabled(wantsFnTap)
             } else {
                 settings.voiceFnTapModeEnabled = false
                 voiceFnTapSession.setEnabled(false)
                 powerKeySuppressed = applyVoiceFunctionMapping(neutralizeVoiceKey: false)
             }
         } else {
-            if requestedFnTapMode {
-                settings.voiceFnTapModeEnabled = false
-            }
             voiceFnTapSession.setEnabled(false)
             powerKeySuppressed = applyVoiceFunctionMapping(neutralizeVoiceKey: false)
         }
@@ -933,6 +947,9 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
 
     func setVoiceTriggerKey(_ trigger: VoiceTriggerKey) {
         guard settings.voiceTriggerKey != trigger else { return }
+        // Release the currently-held trigger using the OLD key before switching;
+        // otherwise a held modifier would be released with the new key code and stick.
+        updateBluetoothVoiceTriggerKey(streaming: false)
         settings.voiceTriggerKey = trigger
         AppLogger.shared.write("VOICE TRIGGER key=\(trigger.rawValue)")
         applyHIDSettings()
@@ -1165,6 +1182,7 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
                 _ = configureVirtualAudioOutput(reason: "bluetooth_ready")
             }
         } else {
+            updateBluetoothVoiceTriggerKey(streaming: false)
             voiceFnTapSession.suspend { [weak self] in
                 self?.releaseVirtualAudioOutputIfUnused(reason: "bluetooth_not_ready")
             }
@@ -1172,8 +1190,10 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
     }
 
     func bluetoothBridgeDidStartVoice(_ bridge: XiaomiBluetoothBridge) {
-        // Pure-trigger mode: the trigger key is emitted by the independent IOKit
-        // hardware remap, so we ignore the remote's audio. Returning before setting
+        // Emit the trigger first: a modifier is injected here (held), while Fn stays a
+        // hardware remap handled elsewhere. Runs in both remote-mic and pure-trigger modes.
+        updateBluetoothVoiceTriggerKey(streaming: true)
+        // Pure-trigger mode: ignore the remote's audio. Returning before setting
         // activeBluetoothVoiceDeviceIdentifier makes didDecode/didStopVoice no-op.
         guard settings.voiceKeyUsesRemoteMicrophone else {
             AppLogger.shared.write("ATVV STREAM trigger_only")
@@ -1215,6 +1235,9 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
     }
 
     func bluetoothBridgeDidStopVoice(_ bridge: XiaomiBluetoothBridge) {
+        // Release the injected modifier on every stop, before the active-device guard,
+        // so a held trigger key is always released (also in pure-trigger mode).
+        updateBluetoothVoiceTriggerKey(streaming: false)
         guard bridge.deviceIdentifier == activeBluetoothVoiceDeviceIdentifier else { return }
         activeBluetoothVoiceDeviceIdentifier = nil
         loggedBluetoothVoiceAudioDeviceIdentifier = nil
@@ -1919,6 +1942,32 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         )
         AppLogger.shared.write(
             "PHONE VOICE FN \(shouldHold ? "DOWN" : "UP")"
+        )
+        return true
+    }
+
+    @discardableResult
+    private func updateBluetoothVoiceTriggerKey(streaming: Bool) -> Bool {
+        guard VoiceKeyModePolicy.usesModifierHoldInjection(trigger: settings.voiceTriggerKey) else {
+            return true
+        }
+        guard let transition = bluetoothVoiceTriggerLatch.transition(streaming: streaming) else {
+            return true
+        }
+        let shouldHold = transition == .press
+        guard KeyboardInjector.setFunctionKeyPressed(
+            shouldHold,
+            trigger: settings.voiceTriggerKey
+        ) else {
+            bluetoothVoiceTriggerLatch.rollback(transition)
+            AppLogger.shared.write(
+                "VOICE TRIGGER INJECT \(shouldHold ? "DOWN" : "UP") failed " +
+                    "key=\(settings.voiceTriggerKey.rawValue)"
+            )
+            return false
+        }
+        AppLogger.shared.write(
+            "VOICE TRIGGER INJECT \(shouldHold ? "DOWN" : "UP") key=\(settings.voiceTriggerKey.rawValue)"
         )
         return true
     }

@@ -81,11 +81,44 @@ struct VoiceTriggerKeyTests {
         #expect(destination.voiceTriggerKey == .rightCommand)
     }
 
-    @Test func fnTapInjectionOnlyWhenUsingRemoteMicrophone() {
-        #expect(VoiceKeyModePolicy.usesFnTapInjection(fnTapEnabled: true, usesRemoteMicrophone: true))
-        #expect(!VoiceKeyModePolicy.usesFnTapInjection(fnTapEnabled: true, usesRemoteMicrophone: false))
-        #expect(!VoiceKeyModePolicy.usesFnTapInjection(fnTapEnabled: false, usesRemoteMicrophone: true))
-        #expect(!VoiceKeyModePolicy.usesFnTapInjection(fnTapEnabled: false, usesRemoteMicrophone: false))
+    @Test func fnTapInjectionAppliesOnlyToFnWhileStreamingRemoteMic() {
+        #expect(VoiceKeyModePolicy.usesFnTapInjection(
+            fnTapEnabled: true, usesRemoteMicrophone: true, trigger: .fn
+        ))
+        #expect(!VoiceKeyModePolicy.usesFnTapInjection(
+            fnTapEnabled: true, usesRemoteMicrophone: false, trigger: .fn
+        ))
+        #expect(!VoiceKeyModePolicy.usesFnTapInjection(
+            fnTapEnabled: false, usesRemoteMicrophone: true, trigger: .fn
+        ))
+        // A modifier trigger never uses Fn-tap injection.
+        #expect(!VoiceKeyModePolicy.usesFnTapInjection(
+            fnTapEnabled: true, usesRemoteMicrophone: true, trigger: .rightCommand
+        ))
+    }
+
+    @Test func modifierTriggersUseHoldInjectionAndNeutralizeHardwareKey() {
+        #expect(!VoiceKeyModePolicy.usesModifierHoldInjection(trigger: .fn))
+        for trigger in [VoiceTriggerKey.rightCommand, .rightOption, .rightShift] {
+            #expect(trigger.isModifier)
+            #expect(VoiceKeyModePolicy.usesModifierHoldInjection(trigger: trigger))
+            // Modifier triggers always neutralize the hardware F5, regardless of mic/Typeless.
+            #expect(VoiceKeyModePolicy.neutralizesHardwareVoiceKey(
+                fnTapEnabled: false, usesRemoteMicrophone: false, trigger: trigger
+            ))
+        }
+    }
+
+    @Test func fnKeepsHardwareRemapUnlessTypeless() {
+        #expect(!VoiceTriggerKey.fn.isModifier)
+        // Fn without Typeless → hardware remap (no neutralize).
+        #expect(!VoiceKeyModePolicy.neutralizesHardwareVoiceKey(
+            fnTapEnabled: false, usesRemoteMicrophone: true, trigger: .fn
+        ))
+        // Fn + Typeless + remote mic → neutralize for tap injection.
+        #expect(VoiceKeyModePolicy.neutralizesHardwareVoiceKey(
+            fnTapEnabled: true, usesRemoteMicrophone: true, trigger: .fn
+        ))
     }
 
     @Test func voiceKeyUsesRemoteMicrophoneDefaultsOnAndRoundTrips() throws {
