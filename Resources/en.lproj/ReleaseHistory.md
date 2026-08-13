@@ -1,5 +1,10 @@
 # Version History
 
+## 1.8.16 (Pre-release)
+
+- Fixed custom shortcuts losing which side of a modifier was pressed. Recording something like "Right Command + comma" was stored as a plain Command, so third-party tools that distinguish the left and right keys never responded. The side is now preserved, the matching physical modifier is held when the shortcut is sent, and the shortcut display shows L/R.
+- Please re-record the affected shortcut after updating: older recordings do not contain the side information.
+
 ## 1.8.15 (Pre-release)
 
 - Fixed the voice trigger key sometimes sticking when set to Right Command/Option/Shift (which could prevent stopping, toggle VoiceOver, or make the system laggy). The modifier is now injected as a press/release tied to the start/stop of speech, and is always released on disconnect, quit, or switching the trigger key.
