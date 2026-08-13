@@ -36,14 +36,24 @@
 - `KeyboardInjector.postShortcut`：有侧别时**按下真实侧别修饰键 → 主键 → 逆序释放**，用 `defer` 保证失败也释放（避免重演“卡修饰键”）；无侧别（旧配置）走**原有 flags-only 路径**，行为不变。两处调用点（`customShortcut`、自定义 App 的 keyboardShortcut 聚焦）统一走该函数。
 - 本地化新增 `keyboard.modifier.left/right`（中英同步）。
 
-## 已知边界：⌘+, 本身的性质
+## 追加（2026-08-13 真机复测）：不是"⌘, 被 App 抢走"，而是注入不保真
 
-`⌘+,` 是 macOS 全局约定的「设置/偏好设置」快捷键，且 **Cocoa 匹配快捷键不区分左右 ⌘**。因此：
+1.8.16 真机结果：电源键**能**触发用户的转文字 App（右侧位已保真），但**同时**前台的钉钉也弹出「设置」。
 
-- 若用户软件用 CGEventTap/全局热键**消费**了该事件，前台 App 不再收到 → 现象 2 一并消失。
-- 若它**不消费**，前台 App 仍可能打开“设置”。此时应改用无人占用的组合（如 `⌃⌥⌘+某键` 或 F13–F20）。
+用户提供关键反证：**手动**用键盘按右⌘+逗号时，钉钉**不**弹设置。这推翻了先前"⌘+, 必被 Cocoa 以侧别无关方式匹配、必被前台 App 打开"的判断——若那成立，手按也该弹。
 
-这一点无法靠本 App 代码消除，已写入测试手册验收步骤。
+只读复查（`defaults` + 日志 + 代码）：
+- 配置正确：`power → raw=0x100010`（通用 Command + 右侧位 `0x10`）。
+- 日志：每次按键只有一条 `HID BUTTON ... action=customShortcut` —— 无线麦**只注入一次**，无重复。
+- 真根因在注入实现：`KeyboardInjector.postKeyState` 用 `CGEvent(..., keyDown:)` 发出的是 **keyDown/keyUp**，而真实硬件按修饰键发的是 **`flagsChanged`**。keyDown 不会改变系统全局修饰键状态，于是：
+  - 逗号事件仍带 ⌘ flag → 钉钉的 Cocoa 菜单快捷键据此打开设置；
+  - 用户 App 拿到的不是手按时那种真实 `flagsChanged` + 完整序列，**未像手按那样"消费"事件**，事件继续泄漏到前台钉钉。
+- 对照手按：真实 `flagsChanged` 被用户 App 消费掉，钉钉收不到 → 不弹设置。差别就在这里。
+
+修复（第二轮）：`postKeyState` 对侧别修饰键码（54/55/56/60/58/61/59/62）改发 **`flagsChanged`** 事件，并按已按下修饰键累积 flags，使注入序列在系统层面与手按一致；`postShortcut` 传递累积 flags 并逆序释放。主键（逗号）仍为普通 keyDown/keyUp。Fn（63）不在此表内，既有语音 Fn 路径不变（但语音键的右侧修饰键 hold 现在同样经由 `flagsChanged`，更保真）。
+
+置信度：keyDown≠flagsChanged 的代码差异**确定**；"改为 flagsChanged 后用户 App 会像手按一样消费、钉钉不再弹设置"为**中高**，需真机复测确认。
+
 
 ## 用户须知
 

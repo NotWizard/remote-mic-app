@@ -110,6 +110,29 @@ enum KeyboardInjector {
         )
     }
 
+    // Side-specific modifier keys and the flags each one contributes (generic mask
+    // plus its device-dependent side bit). Real hardware reports modifier changes as
+    // flagsChanged, so these codes are posted that way. Fn (63) is intentionally
+    // absent: its existing injection path is already verified and stays unchanged.
+    private static let modifierFlagsByKeyCode: [CGKeyCode: CGEventFlags] = [
+        54: CGEventFlags(rawValue: CGEventFlags.maskCommand.rawValue | 0x10),
+        55: CGEventFlags(rawValue: CGEventFlags.maskCommand.rawValue | 0x08),
+        56: CGEventFlags(rawValue: CGEventFlags.maskShift.rawValue | 0x02),
+        60: CGEventFlags(rawValue: CGEventFlags.maskShift.rawValue | 0x04),
+        58: CGEventFlags(rawValue: CGEventFlags.maskAlternate.rawValue | 0x20),
+        61: CGEventFlags(rawValue: CGEventFlags.maskAlternate.rawValue | 0x40),
+        59: CGEventFlags(rawValue: CGEventFlags.maskControl.rawValue | 0x01),
+        62: CGEventFlags(rawValue: CGEventFlags.maskControl.rawValue | 0x2000),
+    ]
+
+    static func isModifierKeyCode(_ code: CGKeyCode) -> Bool {
+        modifierFlagsByKeyCode[code] != nil
+    }
+
+    private static func modifierFlags(for code: CGKeyCode) -> CGEventFlags {
+        modifierFlagsByKeyCode[code] ?? []
+    }
+
     /// Sends a recorded shortcut. When a physical side was recorded, the real
     /// side-specific modifier keys are held around the main key so tools that
     /// require e.g. the right Command actually see it; a plain flags-only event
@@ -127,12 +150,17 @@ enum KeyboardInjector {
         }
         var pressed: [CGKeyCode] = []
         defer {
-            for code in pressed.reversed() {
-                _ = keyStatePoster(code, false, [])
+            while let code = pressed.popLast() {
+                let remaining = pressed.reduce(into: CGEventFlags()) { result, held in
+                    result.formUnion(modifierFlags(for: held))
+                }
+                _ = keyStatePoster(code, false, remaining)
             }
         }
+        var accumulated = CGEventFlags()
         for code in modifierCodes {
-            guard keyStatePoster(code, true, flags) else { return }
+            accumulated.formUnion(modifierFlags(for: code))
+            guard keyStatePoster(code, true, accumulated) else { return }
             pressed.append(code)
         }
         keyPoster(CGKeyCode(shortcut.keyCode), flags)
@@ -1366,6 +1394,13 @@ enum KeyboardInjector {
         guard let source = CGEventSource(stateID: .hidSystemState),
               let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: isDown)
         else { return false }
+        // Real hardware reports a modifier change as flagsChanged, not keyDown/keyUp.
+        // Posting keyDown leaves the system modifier state untouched, so hotkey
+        // handlers that check the real state do not consume the keystroke and it
+        // leaks through to the frontmost app.
+        if isModifierKeyCode(code) {
+            event.type = .flagsChanged
+        }
         event.flags = flags
         event.setIntegerValueField(.eventSourceUserData, value: syntheticEventMarker)
         event.post(tap: .cghidEventTap)

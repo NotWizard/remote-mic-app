@@ -435,6 +435,38 @@ struct RemoteButtonsTests {
         #expect(events == ["key:43:\(CGEventFlags.maskCommand.rawValue)"])
     }
 
+    @Test func sideSpecificShortcutInjectsCumulativeSideFlags() {
+        let rightCommand = NSEvent.ModifierFlags(rawValue: 0x0000_0010)
+        let shortcut = CustomKeyboardShortcut(
+            keyCode: 43,
+            modifierFlags: [.command, rightCommand],
+            keyLabel: ","
+        )
+        var downFlags: [(CGKeyCode, CGEventFlags)] = []
+
+        KeyboardInjector.postShortcut(
+            shortcut,
+            keyPoster: { _, _ in },
+            keyStatePoster: { code, isDown, flags in
+                if isDown { downFlags.append((code, flags)) }
+                return true
+            }
+        )
+
+        #expect(downFlags.count == 1)
+        #expect(downFlags[0].0 == 54)
+        #expect(downFlags[0].1.contains(.maskCommand))
+        #expect(downFlags[0].1.rawValue & 0x0000_0010 != 0)
+    }
+
+    @Test func modifierKeyCodesAreClassifiedForFlagsChanged() {
+        for code: CGKeyCode in [54, 55, 56, 60, 58, 61, 59, 62] {
+            #expect(KeyboardInjector.isModifierKeyCode(code))
+        }
+        #expect(!KeyboardInjector.isModifierKeyCode(43)) // comma stays a key press
+        #expect(!KeyboardInjector.isModifierKeyCode(63)) // Fn keeps its own path
+    }
+
     @Test func fixedCompoundShortcutsPostExpectedKeyCodesAndModifiers() {
         let expected: [(ButtonAction, CGKeyCode, CGEventFlags)] = [
             (.commandReturn, 36, .maskCommand),
