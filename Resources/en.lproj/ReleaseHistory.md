@@ -1,5 +1,10 @@
 # Version History
 
+## 1.8.14 (Pre-release)
+
+- The voice button's trigger key is now selectable: Fn (default, compatible with Doubao and system dictation), Right Command, Right Option, or Right Shift, so it can drive third-party voice apps that start on a right-side modifier.
+- Added a "Use the remote's built-in microphone" switch, on by default. When it is off, the voice button acts only as a trigger and no longer captures the remote's microphone, so an external microphone can be used as the input source in noisy places.
+
 ## 1.8.9 (Pre-release)
 
 - Fixed the first Fn voice input sometimes doing nothing after a remote button launched or switched to an app. Remote Mic now waits for the target's editable input to be ready and preserves the beginning of speech during that wait.
