@@ -6,14 +6,14 @@
 
 ## 支持范围
 
-- 运行系统：macOS 14 或更高版本；
-- 架构：Apple Silicon `arm64`；
+- Apple Silicon 发行线：`arm64`、macOS 14 或更高版本；
+- Intel 发行线：`x86_64`、macOS 13 或更高版本；
 - 目标遥控器：小米蓝牙遥控器 2 Pro / RC003；
 - HID 标识：Vendor ID `0x2717`、Product ID `0x32B8`；
 - Swift tools version：6.2；发布机当前使用 Swift 6.3，源码以 Swift 5 语言模式编译；
 - 发布签名：本地开发构建保持带固定 designated requirement 的 ad-hoc 签名。自 v1.3.0 起的正式发布使用 Developer ID Application 与 Developer ID Installer 签名；应用和驱动启用 Hardened Runtime 与可信时间戳，应用、两个 PKG 和 DMG 都经过 Apple 公证并 stapled。
 
-`Package.swift`、`Resources/Info.plist`、构建脚本和验证脚本都把最低系统版本固定为 macOS 14.0，并验证发布二进制只有 `arm64` 架构。
+两条发行线保持独立产物与更新源：Apple Silicon 使用默认文件名和 `appcast.xml`，Intel 使用带 `Intel` 的文件名和 `appcast-intel.xml`。构建与验证脚本分别固定目标架构和最低系统版本，不生成 Universal 包。
 
 ## 模块结构
 
@@ -164,14 +164,9 @@ xcrun swift test
 - `dist/Remote-Mic-<版本>.dmg`；
 - `dist/Remote-Mic-<版本>.dmg.sha256`。
 
-DMG 根目录严格只有四项：
+DMG 根目录严格只有 `Install Remote Mic.pkg`；App-only ZIP 与对应架构的卸载 PKG 继续作为同一 Release 的高级资产。安装 PKG 不再作为独立 Release 资产重复上传，但仍完整保留在 DMG 内，并继续接受签名、公证、Gatekeeper 和 payload 校验。安装 PKG 在内部暂存驱动，安装后仅在现有驱动缺失、损坏、架构不符、签名异常或版本不匹配时替换，健康同版本驱动保持原样。
 
-- `Install Remote Mic.pkg`；
-- `Uninstall Remote Mic.pkg`；
-- `Remote Mic.app`；
-- 指向 `/Applications` 的 `Applications` 入口。
-
-`verify-dmg.sh` 校验 SHA-256、HFS+ 镜像、根目录清单、应用 bundle 内容、PKG payload、版本号、`arm64` 架构、macOS 14.0 最低版本、有效代码签名和本地路径泄漏。正式模式还校验 Developer ID Team、Hardened Runtime、PKG/DMG 签名、stapled 公证票据与 Gatekeeper 评估。
+`verify-dmg.sh` 校验 SHA-256、HFS+ 镜像、唯一根入口和安装 PKG payload。应用 bundle、卸载 PKG、版本号、架构、最低系统、签名与本地路径泄漏继续由各自产物校验器覆盖；正式模式还校验 Developer ID Team、Hardened Runtime、PKG/DMG 签名、stapled 公证票据与 Gatekeeper 评估。
 
 Sparkle `2.9.4` 通过 SwiftPM 嵌入应用。更新源和 EdDSA 公钥位于应用的 `Info.plist`；私钥仅存储在发布者本机的受限存储中，不进入项目或 Release。`SUEnableAutomaticChecks=true` 与 `SUScheduledCheckInterval=86400` 启用每日自动检查；`SUAutomaticallyUpdate=false` 与 `SUAllowsAutomaticUpdates=false` 禁止静默下载或自动安装。用户仍可选择菜单中的“检查更新…”立即检查。Sparkle 仅更新应用 bundle，不安装或替换兼容麦克风驱动。
 
@@ -179,9 +174,9 @@ Sparkle `2.9.4` 通过 SwiftPM 嵌入应用。更新源和 EdDSA 公钥位于应
 
 候选版本先以 GitHub pre-release 发布。`notarize-release.sh` 使用固定 `RELEASE_TAG` 生成 appcast 的 GitHub 发布页，并让 enclosure ZIP 和本地化更新说明使用 `download.sayall.app/mac/releases/<tag>/` 的不可变 Cloudflare CDN 地址；发布脚本在 GitHub 资产可用后从 CDN 重新下载并逐字节比较，同时验证 `HEAD` 与 `Range`。应用内的 `SUFeedURL` 仍固定为 GitHub `releases/latest/download/appcast.xml`，旧安装用户不需要迁移 feed。GitHub 的 latest release 排除 draft 和 pre-release，因此默认关闭预发布检查的用户继续取得正式版本 appcast。用户在“关于”页主动开启预发布检查后，应用通过 GitHub 公共 Release API 解析最新一个带 `appcast.xml` 的非草稿 Release，并把其不可变资产 URL 作为 Sparkle 动态 feed；手动检查前会刷新，常驻运行时也会定期刷新。
 
-`scripts/publish-release.sh prerelease` 只接受干净、已推送且由同一远端 Tag 指向的源提交，发布 ZIP、两个 PKG、DMG、校验文件和 appcast，并确认 pre-release 未改变 latest release。脚本随后从公开 Release 回下载六个资产并逐字节比较。测试机应使用 Sparkle CLI 的单次 `--feed-url <候选版本 appcast URL>` 覆盖完成候选探测或更新，不写入持久化的 `SUFeedURL` 偏好；实际安装候选版本时需要处于已解锁的图形会话。
+`scripts/publish-release.sh prerelease` 只接受干净、已推送且由同一远端 Tag 指向的源提交。公开矩阵固定为 12 项：两套 DMG、两套 Sparkle ZIP、两套 appcast、两套架构卸载 PKG、共享中英文更新说明、合并的 SHA-256 清单和候选 provenance。两套安装 PKG 只存在于对应 DMG 内，不再作为独立 Release 资产重复上传。脚本确认 pre-release 未改变 latest release，并从 GitHub 与 CDN 回下载全部 12 项逐字节比较；晋升逻辑继续兼容历史 15/17 项 Release。测试机应使用与架构一致的 Sparkle CLI 单次 `--feed-url <候选版本 appcast URL>` 覆盖完成候选探测或更新，不写入持久化的 `SUFeedURL` 偏好；实际安装候选版本时需要处于已解锁的图形会话。
 
-仅修改本地化文案或内置文档的低风险版本，在完成版本号、发布历史和 commit 后可使用 `ALLOW_ISOLATED_RELEASE_KEYCHAIN=1 ./scripts/fast-release.sh`。它会运行完整 Swift 测试、Push `main`、使用一次性 Keychain 签名，并行提交两个 PKG 公证，再用 `publish-release.sh release` 在同一进程中完成 pre-release、公开资产逐字节校验和正式晋升。快速命令只允许明确的文档和资源白名单，且 `Info.plist` 只能改变显示版本与 build number；发现 Swift、蓝牙、音频、安装器或发布流水线改动时会拒绝执行，必须走完整候选验收流程。
+仅修改本地化文案或内置文档的低风险版本，在 `release/pre-v<版本>` 候选分支完成版本号、发布历史、commit 和 push 后，可使用 `ALLOW_ISOLATED_RELEASE_KEYCHAIN=1 ./scripts/fast-release.sh`。它会运行完整 Swift 测试、使用一次性 Keychain 分别签名并公证 Apple Silicon 与 Intel 产物，再发布 pre-release 并逐字节校验公开资产。正式晋升仍是独立授权步骤，必须在同一候选提交进入 `main` 后复用原始候选字节。快速命令只允许明确的文档和资源白名单，且 `Info.plist` 只能改变显示版本与 build number；发现 Swift、蓝牙、音频、安装器或发布流水线改动时会拒绝执行，必须走完整候选验收流程。
 
 候选版本通过干净安装、运行和 Sparkle 端到端更新测试后，运行 `scripts/publish-release.sh promote` 将相同 Tag 和相同资产晋升为正式版。晋升后必须再次确认 latest appcast 与候选版本 appcast 逐字节一致。失败的候选版本不得覆盖资产或晋升；应递增显示版本和 `CFBundleVersion`，重新构建、签名、公证并发布新的 pre-release。
 

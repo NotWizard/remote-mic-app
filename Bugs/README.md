@@ -1,5 +1,16 @@
 # Bug 记录
 
+- [Apple Watch BLE 语音已启动但没有有效电平](./2026-08-18-watch-ble-audio-no-signal.md)
+- [MiRemoteV 2ch 音频通道偶发失效，重新选择后恢复](./2026-08-17-miremotev-audio-channel-stale-until-reselected.md)
+- [移动设备已连接后仍显示正在等待](./2026-08-15-mobile-connection-still-shows-waiting/DEBUG.md)
+- [macOS 签名发布并发缓存冲突与无限等待](./2026-08-16-macos-signed-release-timeout.md)
+- [发布阶段 heartbeat 与 timeout 同时到期导致 CI 偶发失败](./2026-08-16-release-stage-heartbeat-timeout-flake.md)
+- [正式版晋升 Runner 缺少 ripgrep](./2026-08-17-stable-promotion-runner-missing-rg.md)
+- [Intel Sparkle appcast 缺少本地化更新说明](./2026-08-13-intel-appcast-missing-release-notes.md)
+- [SwiftPM 资源构建路径进入发布 App](./2026-08-13-swiftpm-resource-build-path-leak.md)
+- [GitHub Actions 无法读取私有 Mac 远控组件](./2026-08-13-private-mac-remote-package-ci-access.md)
+- [真实候选版本号导致预发布生命周期测试夹具失败](./2026-08-13-preview-lifecycle-fixture-current-version.md)
+
 本目录统一保存已经发现、调查或修复的问题。每个 Bug 使用独立 Markdown 文件，至少记录时间、状态、影响范围、功能点、简单描述和详细过程；无法从历史提交恢复的细节会明确标注，不补写推测。
 
 新增 Bug 时先按“观察 → 假设 → 实验 → 结论”记录调查，确认根因后补充修复与验证。DEBUG.md 只保留入口说明，历史内容已迁移到这里。
@@ -27,6 +38,7 @@
 
 | 时间 | Bug | 状态 |
 | --- | --- | --- |
+| 2026-08-18 | [Apple Watch BLE 语音已启动但没有有效电平](./2026-08-18-watch-ble-audio-no-signal.md) | 诊断修复完成，等待真机验收 |
 | 2026-07-29 | [睡眠或音频路由变化后打开页面崩溃](./2026-07-29-audio-route-change-player-crash.md) | 已修复 |
 | 2026-07-30 | [Automatic Application Focus Investigation](./2026-07-30-automatic-application-focus.md) | 已修复 |
 | 2026-07-30 | [cmux Frontmost Refocus Follow-up](./2026-07-30-cmux-frontmost-refocus-follow-up.md) | 已修复 |
@@ -45,7 +57,7 @@
 | 2026-08-06 | [macOS 1.7.6 连接遥控器时启动退出](./2026-08-06-macos-176-hid-client-startup-crash.md) | 已修复 |
 | 2026-08-06 | [手机网页版按键只能触发单击](./2026-08-06-mobile-web-buttons-only-single-click.md) | 已修复 |
 | 2026-08-08 | [RC001-MS 语音遥控器适配](./2026-08-08-rc001-voice-remote-compatibility.md) | 兼容性调查已归档 |
-| 2026-08-08 | [RC001 / RC003 型号与充电状态识别](./2026-08-08-remote-model-and-power-detection.md) | 已实现并归档 |
+| 2026-08-08 | [RC001 / RC003 型号与充电状态识别](./2026-08-08-remote-model-and-power-detection.md) | 已修复 <!-- workshop:status=已完成;priority=P2 --> |
 | 2026-08-09 | [Centered Remote Mapping Layout](./2026-08-09-centered-remote-mapping-layout.md) | UI 缺陷已修复 |
 | 2026-08-09 | [Custom Shortcut Repeat and Sidebar Focus Regression](./2026-08-09-custom-shortcut-repeat-and-sidebar-focus.md) | 已修复 |
 | 2026-08-09 | [Frontmost Remote Mic Navigation Repeat Error Sound](./2026-08-09-frontmost-navigation-repeat-error-sound.md) | 已修复 |
@@ -63,13 +75,28 @@
 | 2026-08-10 | [左右键按住不能连续移动](./2026-08-10-left-right-hold-repeat.md) | 候选修复完成，硬件模拟通过，等待真机验证 |
 | 2026-08-10 | [增益滑块轨道拖动带动整个窗口](./2026-08-10-gain-slider-drags-window.md) | 已修复，等待可见界面复验 |
 | 2026-08-11 | [预发布候选工作流依赖 Runner 未安装的 rg](./2026-08-11-preview-candidate-runner-missing-rg.md) | 已修复 |
-| 2026-08-11 | [Onboarding 新配对遥控器 BLE 与 HID 状态不刷新](./2026-08-11-onboarding-new-remote-ble-hid-refresh.md) | 候选修复完成，等待真机验收 |
+| 2026-08-11 | [Onboarding 新配对遥控器 BLE 与 HID 状态不刷新](./2026-08-11-onboarding-new-remote-ble-hid-refresh.md) | 已修复 <!-- workshop:status=已完成;priority=P2 --> |
 | 2026-08-11 | [Onboarding 全流程恢复与最终可用性审计](./2026-08-11-onboarding-end-to-end-recovery-audit.md) | 候选修复完成，等待真实全流程验收 |
 | 2026-08-11 | [遥控器设备卡名称、状态截断并重复展示](./2026-08-11-remote-device-card-clipping-and-duplication.md) | 候选修复完成，浅/深色页面通过 |
-| 2026-08-11 | [升级后 Onboarding 已收到实体按键但仍显示蓝牙未连接](./2026-08-11-onboarding-upgrade-hid-before-ble.md) | 候选修复完成，等待真实升级与 RC003 验收 |
-| 2026-08-11 | [蓝牙断连后虚拟麦克风仍保持活动](./2026-08-11-bluetooth-disconnect-keeps-virtual-microphone-active.md) | 候选修复完成，等待真机与会议 App 验证 |
+| 2026-08-11 | [升级后 Onboarding 已收到实体按键但仍显示蓝牙未连接](./2026-08-11-onboarding-upgrade-hid-before-ble.md) | 已修复 <!-- workshop:status=已完成;priority=P2 --> |
+| 2026-08-11 | [蓝牙断连后虚拟麦克风仍保持活动](./2026-08-11-bluetooth-disconnect-keeps-virtual-microphone-active.md) | 已修复 <!-- workshop:status=已完成;priority=P2 --> |
 | 2026-08-11 | [已安装用户升级后被要求重新完成 Onboarding](./2026-08-11-existing-users-forced-through-onboarding.md) | 候选修复完成，等待真实升级验收 |
 | 2026-08-11 | [Onboarding 音频步骤错误地只接受 MiRemoteV 2ch](./2026-08-11-onboarding-requires-miremote-audio-device.md) | 候选修复完成，等待真实音频设备验收 |
+| 2026-08-12 | [Remote Mic 运行期间 MacBook 实体方向键偶发失效](./2026-08-12-physical-arrow-keys-blocked.md) | 已修复，自动化通过，等待真机复验 |
+| 2026-08-12 | [Mac 等待手机后无法取消或切换设备](./2026-08-12-mac-phone-waiting-cannot-cancel.md) | 已修复，等待多手机真机验收 |
+| 2026-08-13 | [GitHub Actions 无法读取私有 Mac 远控组件](./2026-08-13-private-mac-remote-package-ci-access.md) | 已修复，两架构 CI 验证通过 |
+| 2026-08-13 | [真实候选版本号导致预发布生命周期测试夹具失败](./2026-08-13-preview-lifecycle-fixture-current-version.md) | 已修复，自动化验证通过 |
+| 2026-08-14 | [内测邀请码兑换成功但客户端无反应](./2026-08-14-early-access-fractional-server-time.md) | 已修复，等待签名安装包与用户验收 |
+| 2026-08-14 | [预览候选首次打开设置窗口因私有资源 Bundle 路径崩溃](./2026-08-14-preview-private-resource-bundle-startup-crash.md) | 已修复，等待新签名候选验证 |
+| 2026-08-14 | [1.8.22 点击快捷指令后 App 崩溃](./2026-08-14-quick-commands-click-crash.md) | 源码修复完成，等待新签名包与用户验收 |
+| 2026-08-14 | [私有邀请码页面显示本地化 Key 且文本编辑快捷键不可用](./2026-08-14-private-enrollment-localization-edit-shortcuts.md) | 候选修复完成，等待最终签名 App 人工验收 |
+| 2026-08-14 | [Watch 与 iPhone 附近连接同时回归](./2026-08-14-watch-ios-nearby-connection-regression/DEBUG.md) | 已修复并通过自动化/本机发布验证，等待实际设备验收 |
+| 2026-08-15 | [Watch BLE 音频积压阻塞 iPhone 语音](./2026-08-15-watch-ble-audio-backlog-blocks-iphone/DEBUG.md) | 候选修复完成，等待真实 Watch 与实际测试 Mac 验收 |
+| 2026-08-15 | [移动设备已连接后仍显示正在等待](./2026-08-15-mobile-connection-still-shows-waiting/DEBUG.md) | 候选修复完成，等待真实 iPhone / Watch 验收 |
+| 2026-08-16 | [macOS 签名发布并发缓存冲突与无限等待](./2026-08-16-macos-signed-release-timeout.md) | 第二次修复完成，等待下一次真实受保护工作流验证 |
+| 2026-08-16 | [发布阶段 heartbeat 与 timeout 同时到期导致 CI 偶发失败](./2026-08-16-release-stage-heartbeat-timeout-flake.md) | 已修复，自动化验证通过 |
+| 2026-08-17 | [正式版晋升 Runner 缺少 ripgrep](./2026-08-17-stable-promotion-runner-missing-rg.md) | 已修复，等待下一次受保护晋升验证 |
+| 2026-08-17 | [MiRemoteV 2ch 音频通道偶发失效，重新选择后恢复](./2026-08-17-miremotev-audio-channel-stale-until-reselected.md) | 未修复，等待现场日志与真机复现 |
 
 ## 记录模板
 

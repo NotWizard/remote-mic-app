@@ -2,12 +2,15 @@ import AppKit
 import Charts
 import Combine
 import CoreBluetooth
+import SayAllMacRemoteCore
+import SayAllMacRemoteUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-private enum SettingsSection: String, CaseIterable, Identifiable {
+enum SettingsSection: String, CaseIterable, Identifiable {
     case connection
     case privateFeature
+    case macros
     case mapping
     case statistics
     case permissions
@@ -19,6 +22,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .connection: return "settings.section.connection"
         case .privateFeature: return ""
+        case .macros: return ""
         case .mapping: return "settings.section.buttons"
         case .statistics: return "settings.section.statistics"
         case .permissions: return "settings.section.permissions"
@@ -30,6 +34,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .connection: return "link"
         case .privateFeature: return "sparkles"
+        case .macros: return "command.square"
         case .mapping: return "keyboard"
         case .statistics: return "chart.bar.xaxis"
         case .permissions: return "shield.lefthalf.filled"
@@ -37,6 +42,8 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         }
     }
 }
+
+extension BridgeAppModel: WebRemoteSessionModel {}
 
 private enum PermissionVisualState {
     case granted
@@ -135,18 +142,45 @@ enum MappingPermissionPolicy {
     }
 }
 
+struct VersionTapRevealCounter {
+    private(set) var tapCount = 0
+    let requiredTaps: Int
+
+    init(requiredTaps: Int = 5) {
+        self.requiredTaps = max(1, requiredTaps)
+    }
+
+    mutating func registerTap() -> Bool {
+        tapCount += 1
+        guard tapCount >= requiredTaps else { return false }
+        tapCount = 0
+        return true
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var model: BridgeAppModel
     @ObservedObject var settings: AppSettings
     @ObservedObject private var privateFeature: PrivateFeatureIntegration
+    @ObservedObject private var macroFeature: MacroFeatureIntegration
     @ObservedObject private var updateInformation: UpdateInformationStore
     @EnvironmentObject private var localization: LocalizationStore
 
     private let checkForUpdates: () -> Void
     private let refreshUpdateInformation: () -> Void
     private let setDockIconVisible: (Bool) -> Void
+    private let minimumContentSize: CGSize
+    private static let sidebarSectionOrder: [SettingsSection] = [
+        .mapping,
+        .macros,
+        .statistics,
+        .connection,
+        .privateFeature,
+        .permissions,
+        .about,
+    ]
 
-    @State private var selectedSection: SettingsSection = .connection
+    @State private var selectedSection: SettingsSection
     @State private var selectedRemoteButton: RemoteButton = .ok
     @State private var isMappingSelectionLocked = true
     @State private var selectedUsagePeriod: UsageStatisticsPeriod = .today
@@ -170,6 +204,7 @@ struct SettingsView: View {
     @State private var isMappingPermissionAlertPresented = false
     @State private var isWaitingForMappingPermissions = false
     @State private var webRemoteInviteCode = ""
+    @State private var versionTapRevealCounter = VersionTapRevealCounter()
     private static let requiredWebRemoteInviteCode = "8586"
 
     init(
@@ -177,15 +212,20 @@ struct SettingsView: View {
         updateInformation: UpdateInformationStore,
         checkForUpdates: @escaping () -> Void = {},
         refreshUpdateInformation: @escaping () -> Void = {},
-        setDockIconVisible: @escaping (Bool) -> Void = { _ in }
+        setDockIconVisible: @escaping (Bool) -> Void = { _ in },
+        initialSection: SettingsSection = .connection,
+        minimumContentSize: CGSize = CGSize(width: 980, height: 732)
     ) {
         self.model = model
         settings = model.settings
         privateFeature = model.privateFeature
+        macroFeature = model.macroFeature
         self.updateInformation = updateInformation
         self.checkForUpdates = checkForUpdates
         self.refreshUpdateInformation = refreshUpdateInformation
         self.setDockIconVisible = setDockIconVisible
+        self.minimumContentSize = minimumContentSize
+        _selectedSection = State(initialValue: initialSection)
     }
 
     var body: some View {
@@ -200,8 +240,20 @@ struct SettingsView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor).ignoresSafeArea())
         .environment(\.locale, localization.locale)
-        .frame(minWidth: 980, minHeight: 732)
-        .onAppear(perform: refreshPermissionStates)
+        .frame(
+            minWidth: minimumContentSize.width,
+            minHeight: minimumContentSize.height
+        )
+        .onAppear {
+            refreshPermissionStates()
+            macroFeature.setEditorActive(selectedSection == .macros)
+        }
+        .onChange(of: selectedSection) { section in
+            macroFeature.setEditorActive(section == .macros)
+        }
+        .onDisappear {
+            macroFeature.setEditorActive(false)
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshPermissionStates()
             resumeCustomMappingIfPermissionsGranted()
@@ -211,12 +263,16 @@ struct SettingsView: View {
                 selectedSection = .about
             }
         }
+        .onReceive(macroFeature.$isFeatureVisible.removeDuplicates()) { isVisible in
+            if !isVisible, selectedSection == .macros {
+                selectedSection = .about
+            }
+        }
         .sheet(isPresented: $isReleaseHistoryPresented) {
             ReleaseHistorySheet()
         }
         .sheet(isPresented: $isWebRemoteSessionPresented) {
-            WebRemoteSessionView(model: model)
-                .environmentObject(localization)
+            webRemoteSessionView
         }
         .alert(
             localization.text("connection.trusted_devices.clear_confirm.title"),
@@ -234,8 +290,7 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $isWebRemoteInvitePresented) {
             if isWebRemoteInviteAuthorized {
-                WebRemoteSessionView(model: model)
-                    .environmentObject(localization)
+                webRemoteSessionView
             } else {
                 webRemoteInviteSheet
             }
@@ -355,6 +410,16 @@ struct SettingsView: View {
         .frame(width: 540)
     }
 
+    private var webRemoteSessionView: some View {
+        WebRemoteSessionView(
+            model: model,
+            localization: WebRemoteSessionLocalization(
+                locale: localization.locale,
+                text: localization.text
+            )
+        )
+    }
+
     private var sidebar: some View {
         VStack(spacing: 0) {
             WindowDragArea()
@@ -369,8 +434,12 @@ struct SettingsView: View {
     }
 
     private var visibleSections: [SettingsSection] {
-        SettingsSection.allCases.filter {
-            $0 != .privateFeature || privateFeature.isFeatureVisible
+        Self.sidebarSectionOrder.filter {
+            switch $0 {
+            case .privateFeature: privateFeature.isFeatureVisible
+            case .macros: macroFeature.isFeatureVisible
+            default: true
+            }
         }
     }
 
@@ -379,12 +448,10 @@ struct SettingsView: View {
             selectedSection = section
         } label: {
             VStack(spacing: 7) {
-                Image(systemName: section == .privateFeature
-                    ? privateFeature.sectionSystemImage
-                    : section.systemImage)
+                Image(systemName: sectionSystemImage(section))
                     .font(.system(size: 21, weight: .semibold))
-                if section == .privateFeature {
-                    Text(privateFeature.sectionTitle)
+                if section == .privateFeature || section == .macros {
+                    Text(sectionTitle(section))
                         .font(.system(size: 13, weight: .semibold))
                 } else {
                     Text(section.title)
@@ -396,7 +463,7 @@ struct SettingsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .focusEffectDisabled()
+        .compatibilityFocusEffectDisabled()
         .foregroundStyle(selectedSection == section ? Color.accentColor : Color.secondary)
         .background(selectedSection == section ? Color.accentColor.opacity(0.10) : Color.clear)
         .accessibilityAddTraits(selectedSection == section ? .isSelected : [])
@@ -410,6 +477,20 @@ struct SettingsView: View {
         case .privateFeature:
             if privateFeature.isFeatureVisible {
                 privateFeature.settingsView()
+            } else {
+                aboutPage
+            }
+        case .macros:
+            if macroFeature.isFeatureVisible {
+                macroFeature.settingsView(
+                    selectedRemoteProfileID: settings.selectedRemoteProfileID,
+                    configuredActionTitle: { buttonValue, triggerValue in
+                        guard let button = RemoteButton(rawValue: buttonValue),
+                              let trigger = ButtonTrigger(rawValue: triggerValue)
+                        else { return nil }
+                        return mappingActionSummary(for: button, trigger: trigger)
+                    }
+                )
             } else {
                 aboutPage
             }
@@ -483,8 +564,8 @@ struct SettingsView: View {
                                 Text("connection.phone.ios_title")
                                     .font(.subheadline.weight(.semibold))
                                 Text("connection.phone.no_invite_badge")
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(.green)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(.secondary)
                             }
                             Text("connection.phone.ios_help")
                                 .font(.caption)
@@ -496,24 +577,31 @@ struct SettingsView: View {
 
                         StatusPill(
                             text: localization.text(
-                                model.isPhoneRemoteConnectionEnabled
-                                    ? "connection.phone.enabled"
-                                    : "connection.phone.not_enabled"
+                                model.isPhoneRemoteConnected
+                                    ? "connection.phone.connected"
+                                    : model.isPhoneRemoteConnectionEnabled
+                                        ? "connection.phone.enabled"
+                                        : "connection.phone.not_enabled"
                             ),
-                            tint: model.isPhoneRemoteConnectionEnabled ? .green : .secondary
+                            tint: model.isPhoneRemoteConnected
+                                ? .green
+                                : model.isPhoneRemoteConnectionEnabled ? .orange : .secondary
                         )
                     }
 
                     HStack(spacing: 8) {
                         Button(
-                            model.isPhoneRemoteConnectionEnabled
-                                ? "connection.phone.enabled"
-                                : "connection.phone.connect"
+                            model.isPhoneRemoteConnected
+                                ? "connection.phone.disconnect"
+                                : model.isPhoneRemoteConnectionEnabled
+                                    ? "connection.phone.cancel_waiting"
+                                    : "connection.phone.connect"
                         ) {
-                            model.enablePhoneRemoteConnection()
+                            model.togglePhoneRemoteConnection()
                         }
-                        .compatibilityButtonStyle(.prominent)
-                        .disabled(model.isPhoneRemoteConnectionEnabled)
+                        .compatibilityButtonStyle(
+                            model.isPhoneRemoteConnectionEnabled ? .standard : .prominent
+                        )
 
                         Link(destination: AppLinks.testFlightPublicBeta) {
                             Label("connection.web.invite.testflight_open", systemImage: "arrow.up.right.square")
@@ -534,6 +622,50 @@ struct SettingsView: View {
                         }
                         .compatibilityButtonStyle(.standard)
                     }
+                }
+
+                Divider()
+
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: "applewatch")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 34)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("connection.watch.title")
+                            .font(.subheadline.weight(.semibold))
+                        Text("connection.watch.help")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    StatusPill(
+                        text: localization.text(
+                            model.isWatchRemoteConnected
+                                ? "connection.watch.connected"
+                                : model.isWatchRemoteConnectionEnabled
+                                    ? "connection.watch.enabled"
+                                    : "connection.phone.not_enabled"
+                        ),
+                        tint: model.isWatchRemoteConnected
+                            ? .green
+                            : model.isWatchRemoteConnectionEnabled ? .orange : .secondary
+                    )
+
+                    Button(
+                        model.isWatchRemoteConnected
+                            ? "connection.watch.disconnect"
+                            : model.isWatchRemoteConnectionEnabled
+                                ? "connection.watch.cancel_waiting"
+                                : "connection.watch.connect"
+                    ) {
+                        model.toggleWatchRemoteConnection()
+                    }
+                    .compatibilityButtonStyle(.standard)
                 }
 
                 Divider()
@@ -627,7 +759,7 @@ struct SettingsView: View {
                         .foregroundStyle(.white)
                 }
                     .compatibilityButtonStyle(.prominent)
-                    .buttonBorderShape(.roundedRectangle(radius: 10))
+                    .compatibilityRoundedButtonBorderShape(radius: 10)
                     .frame(maxWidth: .infinity)
 
             }
@@ -825,7 +957,7 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
                 .compatibilityScrollEdgeEffect()
-                .onChange(of: mappingEditingTarget?.id) { _, targetID in
+                .onChange(of: mappingEditingTarget?.id) { targetID in
                     guard targetID != nil else { return }
                     DispatchQueue.main.async {
                         withAnimation(.easeInOut(duration: 0.25)) {
@@ -2097,9 +2229,13 @@ struct SettingsView: View {
                                         Text("about.version.current")
                                             .font(.subheadline)
                                             .foregroundStyle(.secondary)
-                                        Text(currentVersion)
-                                            .font(.system(size: 28, weight: .semibold))
-                                            .monospacedDigit()
+                                        Button(action: revealPrivateEnrollmentIfNeeded) {
+                                            Text(currentVersion)
+                                                .font(.system(size: 28, weight: .semibold))
+                                                .monospacedDigit()
+                                        }
+                                        .buttonStyle(.plain)
+                                        .contentShape(Rectangle())
                                     }
 
                                     if case let .available(update) = updateInformation.state {
@@ -2192,6 +2328,10 @@ struct SettingsView: View {
 
                     if privateFeature.shouldShowEnrollment {
                         privateFeature.enrollmentView()
+                    }
+
+                    if macroFeature.shouldShowEnrollment {
+                        macroFeature.enrollmentView()
                     }
 
                     GlassPanel {
@@ -2349,7 +2489,28 @@ struct SettingsView: View {
                 }
             }
         }
-        .onAppear(perform: refreshUpdateInformation)
+        .onAppear {
+            guard UpdateCheckPolicy(
+                checksForPreReleaseUpdates: settings.checksForPreReleaseUpdates
+            ).refreshesAboutInformationOnAppear else { return }
+            refreshUpdateInformation()
+        }
+    }
+
+    private func sectionTitle(_ section: SettingsSection) -> String {
+        switch section {
+        case .privateFeature: privateFeature.sectionTitle
+        case .macros: macroFeature.sectionTitle
+        default: ""
+        }
+    }
+
+    private func sectionSystemImage(_ section: SettingsSection) -> String {
+        switch section {
+        case .privateFeature: privateFeature.sectionSystemImage
+        case .macros: macroFeature.sectionSystemImage
+        default: section.systemImage
+        }
     }
 
     @ViewBuilder
@@ -2418,6 +2579,12 @@ struct SettingsView: View {
         Bundle.main.object(
             forInfoDictionaryKey: "CFBundleShortVersionString"
         ) as? String ?? localization.text("common.value.unknown")
+    }
+
+    private func revealPrivateEnrollmentIfNeeded() {
+        guard versionTapRevealCounter.registerTap() else { return }
+        privateFeature.revealEnrollment()
+        macroFeature.revealEnrollment()
     }
 
     private func languageTitle(_ language: AppLanguage) -> String {
@@ -3016,6 +3183,14 @@ private enum CompatibilityButtonStyle {
     case prominent
 }
 
+private enum SettingsVisualRenderingPolicy {
+    static let isScreenshotHarness = ProcessInfo.processInfo.environment[
+        "REMOTE_MIC_SETTINGS_SCREENSHOT_DIR"
+    ] != nil
+
+    static var usesNativeGlass: Bool { !isScreenshotHarness }
+}
+
 private struct CompatibilityGlassContainer<Content: View>: View {
     let spacing: CGFloat
     private let content: Content
@@ -3027,7 +3202,7 @@ private struct CompatibilityGlassContainer<Content: View>: View {
 
     @ViewBuilder
     var body: some View {
-        if #available(macOS 26.0, *) {
+        if #available(macOS 26.0, *), SettingsVisualRenderingPolicy.usesNativeGlass {
             GlassEffectContainer(spacing: spacing) {
                 content
             }
@@ -3042,7 +3217,7 @@ private struct CompatibilityButtonStyleModifier: ViewModifier {
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if #available(macOS 26.0, *) {
+        if #available(macOS 26.0, *), SettingsVisualRenderingPolicy.usesNativeGlass {
             switch style {
             case .standard:
                 content.buttonStyle(.glass)
@@ -3063,8 +3238,32 @@ private struct CompatibilityButtonStyleModifier: ViewModifier {
 private struct CompatibilityScrollEdgeEffectModifier: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
-        if #available(macOS 26.0, *) {
+        if #available(macOS 26.0, *), SettingsVisualRenderingPolicy.usesNativeGlass {
             content.scrollEdgeEffectStyle(.soft, for: .top)
+        } else {
+            content
+        }
+    }
+}
+
+private struct CompatibilityFocusEffectDisabledModifier: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 14.0, *) {
+            content.focusEffectDisabled()
+        } else {
+            content
+        }
+    }
+}
+
+private struct CompatibilityRoundedButtonBorderShapeModifier: ViewModifier {
+    let radius: CGFloat
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 14.0, *) {
+            content.buttonBorderShape(.roundedRectangle(radius: radius))
         } else {
             content
         }
@@ -3078,7 +3277,7 @@ private struct CompatibilityTintedGlassModifier<GlassShape: Shape>: ViewModifier
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if #available(macOS 26.0, *) {
+        if #available(macOS 26.0, *), SettingsVisualRenderingPolicy.usesNativeGlass {
             if interactive {
                 content.glassEffect(.clear.tint(tint).interactive(), in: shape)
             } else {
@@ -3104,6 +3303,14 @@ private extension View {
 
     func compatibilityScrollEdgeEffect() -> some View {
         modifier(CompatibilityScrollEdgeEffectModifier())
+    }
+
+    func compatibilityFocusEffectDisabled() -> some View {
+        modifier(CompatibilityFocusEffectDisabledModifier())
+    }
+
+    func compatibilityRoundedButtonBorderShape(radius: CGFloat) -> some View {
+        modifier(CompatibilityRoundedButtonBorderShapeModifier(radius: radius))
     }
 
     func compatibilityTintedGlass<GlassShape: Shape>(
@@ -3139,10 +3346,20 @@ private struct GlassPanel<Content: View>: View {
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
-        if #available(macOS 26.0, *) {
+        if #available(macOS 26.0, *), SettingsVisualRenderingPolicy.usesNativeGlass {
             content
                 .padding(16)
                 .glassEffect(.regular, in: shape)
+        } else if SettingsVisualRenderingPolicy.isScreenshotHarness {
+            content
+                .padding(16)
+                .background(Color(nsColor: .controlBackgroundColor), in: shape)
+                .overlay(
+                    shape.stroke(
+                        Color(nsColor: .separatorColor).opacity(0.45),
+                        lineWidth: 1
+                    )
+                )
         } else {
             content
                 .padding(16)
@@ -3305,7 +3522,7 @@ private struct StatusPill: View {
 
     var body: some View {
         Text(text)
-            .font(.caption.weight(.semibold))
+            .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(tint)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)

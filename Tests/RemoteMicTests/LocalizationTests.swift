@@ -15,13 +15,13 @@ struct LocalizationTests {
         localization.select(.english)
         #expect(localization.language == .english)
         #expect(localization.locale.identifier == "en")
-        #expect(localization.localizedWebsiteURL.absoluteString == "https://8586ai.com/en/")
+        #expect(localization.localizedWebsiteURL.absoluteString == "https://sayall.app/en/")
         #expect(AppSettings(defaults: defaults).applicationLanguage == .english)
 
         localization.select(.simplifiedChinese)
         #expect(localization.language == .simplifiedChinese)
         #expect(localization.locale.identifier == "zh-Hans")
-        #expect(localization.localizedWebsiteURL.absoluteString == "https://8586ai.com/")
+        #expect(localization.localizedWebsiteURL.absoluteString == "https://sayall.app/")
         #expect(AppSettings(defaults: defaults).applicationLanguage == .simplifiedChinese)
     }
 
@@ -76,6 +76,37 @@ struct LocalizationTests {
         #expect(referencedURLs == [expectedURL])
     }
 
+    @Test func readmesUseVersionIndependentMacDownloadEntries() throws {
+        let stableURL = "https://download.sayall.app/mac"
+        let previewURL = "https://github.com/HD838A/remote-mic-app/releases"
+        let expectations = [
+            ("README.md", "## 下载与安装", "- 最新正式版（Apple Silicon）：", "- 最新预览版（Apple Silicon / Intel）："),
+            ("README.en.md", "## Download and install", "- Latest stable release (Apple Silicon):", "- Latest pre-release (Apple Silicon / Intel):"),
+        ]
+
+        for (readmeName, sectionHeading, stablePrefix, previewPrefix) in expectations {
+            let readme = try String(
+                contentsOf: repositoryRoot.appendingPathComponent(readmeName),
+                encoding: .utf8
+            )
+            let sectionStart = try #require(readme.range(of: sectionHeading))
+            let remainingReadme = readme[sectionStart.upperBound...]
+            let sectionEnd = remainingReadme.range(of: "\n## ")?.lowerBound ?? readme.endIndex
+            let downloadSection = readme[sectionStart.lowerBound..<sectionEnd]
+            let stableEntry = try #require(
+                downloadSection.split(separator: "\n").first { $0.hasPrefix(stablePrefix) }
+            )
+            let previewEntry = try #require(
+                downloadSection.split(separator: "\n").first { $0.hasPrefix(previewPrefix) }
+            )
+
+            #expect(stableEntry.contains("](\(stableURL))"))
+            #expect(!stableEntry.contains("/releases/"))
+            #expect(previewEntry.contains("](\(previewURL))"))
+            #expect(!previewEntry.contains("/releases/tag/"))
+        }
+    }
+
     @Test func localizationFilesUseSemanticCompleteKeysAndMatchingFormats() throws {
         let localizationDirectories = try sourceLocalizationDirectories()
         let englishDirectory = try #require(
@@ -83,6 +114,11 @@ struct LocalizationTests {
         )
         let english = try strings(at: englishDirectory.appendingPathComponent("Localizable.strings"))
         let englishInfo = try strings(at: englishDirectory.appendingPathComponent("InfoPlist.strings"))
+
+        #expect(english["action.command_delete"] == "Command-Delete")
+        #expect(english["about.support.feedback"] == "Feedback")
+        #expect(english["onboarding.remote.first_pairing.wake"] == "Hold TV for about 2 seconds until the white light at the bottom starts flashing.")
+        #expect(english["onboarding.remote.first_pairing.pair"] == "Then hold Home + Menu together to enter Bluetooth pairing mode.")
 
         #expect(!english.isEmpty)
         for (key, value) in english {
@@ -94,6 +130,12 @@ struct LocalizationTests {
         for directory in localizationDirectories {
             let localized = try strings(at: directory.appendingPathComponent("Localizable.strings"))
             let localizedInfo = try strings(at: directory.appendingPathComponent("InfoPlist.strings"))
+            if directory.lastPathComponent == "zh-Hans.lproj" {
+                #expect(localized["action.command_delete"] == "Command-Delete")
+                #expect(localized["about.support.feedback"] == "问题反馈")
+                #expect(localized["onboarding.remote.first_pairing.wake"] == "长按 TV 键约 2 秒，直到遥控器底部白灯开始闪烁。")
+                #expect(localized["onboarding.remote.first_pairing.pair"] == "同时长按 Home（主页）+ Menu（菜单）键，进入蓝牙配对模式。")
+            }
             #expect(Set(localized.keys) == Set(english.keys))
             #expect(Set(localizedInfo.keys) == Set(englishInfo.keys))
 

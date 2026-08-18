@@ -1,0 +1,176 @@
+name: macOS Signed Release Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag matching Resources/Info.plist, for example v1.8.13
+        required: true
+        type: string
+
+concurrency:
+  group: mac-signed-package-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+jobs:
+  validate-candidate:
+    name: Verify exact preview candidate CI and Draft recording PR
+    runs-on: macos-15
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out release candidate
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install required validation tools
+        run: |
+          command -v jq >/dev/null || brew install jq
+          command -v rg >/dev/null || brew install ripgrep
+
+      - name: Verify candidate CI, dependency pins, and Draft PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUIRE_PREVIEW_RECORDING_PR: 1
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: ./scripts/verify-preview-candidate-ci.sh
+
+  package:
+    name: Sign and notarize Apple Silicon and Intel packages
+    needs: validate-candidate
+    runs-on: macos-15
+    timeout-minutes: 180
+    environment: mac-release
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      RELEASE_TAG: ${{ inputs.tag }}
+      EXPECTED_DEVELOPER_TEAM_ID: L3QHLDRPAY
+      PARALLEL_RELEASE_VARIANTS: 1
+      PARALLEL_PACKAGE_NOTARIZATION: 1
+      RELEASE_STAGE_TIMEOUTS: 1
+      SIGNED_RELEASE_TIMEOUT_SECONDS: 590
+      REMOTE_WEB_RELAY_URL: ${{ secrets.REMOTE_WEB_RELAY_URL }}
+      EARLY_ACCESS_SERVICE_URL: ${{ secrets.EARLY_ACCESS_SERVICE_URL }}
+
+    steps:
+      - name: Check out release candidate
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check out private feature package
+        uses: actions/checkout@v5
+        with:
+          repository: GetSayAll/sayall-ai
+          ref: 01beeceac9c4091e7e8e122ad1e840ac5e5cee1c
+          path: .private-dependencies/sayall-ai
+          ssh-key: ${{ secrets.SAYALL_AI_DEPLOY_KEY }}
+          persist-credentials: false
+
+      - name: Check out private macro package
+        uses: actions/checkout@v5
+        with:
+          repository: GetSayAll/sayall-macro-platform
+          ref: bd2b3d112594373aa10be2bd5e605a008e6182b1
+          path: .private-dependencies/sayall-macro-platform
+          ssh-key: ${{ secrets.SAYALL_MACRO_PLATFORM_DEPLOY_KEY }}
+          persist-credentials: false
+
+      - name: Check out shared Mac remote package
+        uses: actions/checkout@v5
+        with:
+          repository: GetSayAll/sayall-mac-remote
+          ref: 04a1bf2b713ee98c4d2c07cd690bb4b26288a82d
+          path: .private-dependencies/sayall-mac-remote
+          ssh-key: ${{ secrets.SAYALL_MAC_REMOTE_DEPLOY_KEY }}
+          persist-credentials: false
+
+      - name: Check out readonly release credentials
+        uses: actions/checkout@v5
+        with:
+          repository: HD838A/remotemic-notary-secrets
+          path: .private-release/remotemic-notary-secrets
+          ssh-key: ${{ secrets.RELEASE_CREDENTIALS_DEPLOY_KEY }}
+          persist-credentials: false
+
+      - name: Check out readonly Match signing identities
+        uses: actions/checkout@v5
+        with:
+          repository: HD838A/apple-signing-match
+          path: .private-release/apple-signing-match
+          ssh-key: ${{ secrets.APPLE_SIGNING_MATCH_DEPLOY_KEY }}
+          persist-credentials: false
+
+      - name: Configure private feature package
+        run: |
+          echo "SAYALL_AI_PACKAGE_PATH=$GITHUB_WORKSPACE/.private-dependencies/sayall-ai" >> "$GITHUB_ENV"
+          echo "SAYALL_MACRO_PLATFORM_PATH=$GITHUB_WORKSPACE/.private-dependencies/sayall-macro-platform" >> "$GITHUB_ENV"
+          echo "REQUIRE_SAYALL_AI_PACKAGE=1" >> "$GITHUB_ENV"
+          echo "REQUIRE_SAYALL_MACRO_PLATFORM=1" >> "$GITHUB_ENV"
+          swift package config set-mirror --original https://github.com/GetSayAll/sayall-mac-remote.git --mirror "file://$GITHUB_WORKSPACE/.private-dependencies/sayall-mac-remote"
+
+      - name: Install required tools
+        run: |
+          missing_formulae=()
+          command -v age >/dev/null || missing_formulae+=(age)
+          command -v fastlane >/dev/null || missing_formulae+=(fastlane)
+          command -v rg >/dev/null || missing_formulae+=(ripgrep)
+          if (( ${#missing_formulae[@]} != 0 )); then
+            brew install "${missing_formulae[@]}"
+          fi
+          age --version
+          fastlane --version
+          rg --version
+
+      - name: Prepare protected release identity
+        env:
+          RELEASE_AGE_IDENTITY: ${{ secrets.RELEASE_AGE_IDENTITY }}
+        run: |
+          test -n "$RELEASE_AGE_IDENTITY"
+          release_identity="$RUNNER_TEMP/remotemic-release.agekey"
+          umask 077
+          printf '%s' "$RELEASE_AGE_IDENTITY" > "$release_identity"
+          chmod 600 "$release_identity"
+          {
+            echo "AGE_IDENTITY_FILE=$release_identity"
+            echo "RELEASE_CREDENTIALS_REPO=$GITHUB_WORKSPACE/.private-release/remotemic-notary-secrets"
+            echo "MATCH_REPO=$GITHUB_WORKSPACE/.private-release/apple-signing-match"
+          } >> "$GITHUB_ENV"
+
+      - name: Validate release identity
+        run: |
+          version="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - Resources/Info.plist)"
+          test "$RELEASE_TAG" = "v$version"
+          ./scripts/verify-preview-branch.sh
+
+      - name: Sign, notarize, staple, and verify both variants
+        timeout-minutes: 10
+        run: |
+          ./scripts/run-release-stage.sh \
+            all signed-release "$SIGNED_RELEASE_TIMEOUT_SECONDS" -- \
+            ./scripts/package-macos-release-in-actions.sh
+
+      - name: Upload signed release packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-mic-${{ inputs.tag }}-signed-macos
+          path: |
+            dist/Remote-Mic-*.dmg
+            dist/Remote-Mic-*.dmg.sha256
+            dist/Remote-Mic-*.zip
+            dist/Remote-Mic-*.txt
+            dist/Uninstall Remote Mic.pkg
+            dist/appcast.xml
+            dist/intel/Remote-Mic-*-Intel.dmg
+            dist/intel/Remote-Mic-*-Intel.dmg.sha256
+            dist/intel/Remote-Mic-*-Intel.zip
+            dist/intel/Uninstall Remote Mic Intel.pkg
+            dist/intel/appcast-intel.xml
+          if-no-files-found: error
+          retention-days: 14

@@ -15,11 +15,22 @@ permissions:
 
 jobs:
   validate-and-package:
-    name: Validate and package preview candidate
+    name: Validate and package preview candidate (${{ matrix.label }})
     runs-on: macos-15
-    timeout-minutes: 40
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: apple-silicon
+            label: Apple Silicon
+            artifact: mac-preview-apple-silicon
+          - variant: intel
+            label: Intel Ventura
+            artifact: mac-preview-intel
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      RELEASE_VARIANT: ${{ matrix.variant }}
 
     steps:
       - name: Check out candidate
@@ -31,20 +42,46 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: GetSayAll/sayall-ai
+          ref: 01beeceac9c4091e7e8e122ad1e840ac5e5cee1c
           path: .private-dependencies/sayall-ai
           ssh-key: ${{ secrets.SAYALL_AI_DEPLOY_KEY }}
+          persist-credentials: false
+
+      - name: Check out private macro package
+        uses: actions/checkout@v5
+        with:
+          repository: GetSayAll/sayall-macro-platform
+          ref: bd2b3d112594373aa10be2bd5e605a008e6182b1
+          path: .private-dependencies/sayall-macro-platform
+          ssh-key: ${{ secrets.SAYALL_MACRO_PLATFORM_DEPLOY_KEY }}
           persist-credentials: false
 
       - name: Configure private feature package
         run: |
           echo "SAYALL_AI_PACKAGE_PATH=$GITHUB_WORKSPACE/.private-dependencies/sayall-ai" >> "$GITHUB_ENV"
+          echo "SAYALL_MACRO_PLATFORM_PATH=$GITHUB_WORKSPACE/.private-dependencies/sayall-macro-platform" >> "$GITHUB_ENV"
           echo "REQUIRE_SAYALL_AI_PACKAGE=1" >> "$GITHUB_ENV"
+          echo "REQUIRE_SAYALL_MACRO_PLATFORM=1" >> "$GITHUB_ENV"
+
+      - name: Check out shared Mac remote package
+        uses: actions/checkout@v5
+        with:
+          repository: GetSayAll/sayall-mac-remote
+          ref: 04a1bf2b713ee98c4d2c07cd690bb4b26288a82d
+          path: .private-dependencies/sayall-mac-remote
+          ssh-key: ${{ secrets.SAYALL_MAC_REMOTE_DEPLOY_KEY }}
+          persist-credentials: false
+
+      - name: Configure shared Mac remote package
+        run: swift package config set-mirror --original https://github.com/GetSayAll/sayall-mac-remote.git --mirror "file://$GITHUB_WORKSPACE/.private-dependencies/sayall-mac-remote"
 
       - name: Install required tools
         run: command -v rg >/dev/null || brew install ripgrep
 
       - name: Validate candidate branch provenance
-        run: ./scripts/verify-preview-branch.sh
+        run: |
+          ./scripts/verify-preview-branch.sh
+          ./scripts/verify-release-dependency-pins.sh
 
       - name: Run Swift tests
         run: swift test
@@ -55,28 +92,21 @@ jobs:
           swift test --filter CoreVoiceInputJourneyTests
 
       - name: Run project self-test
-        run: ./scripts/test.sh
+        run: SKIP_SWIFT_PACKAGE_BUILD=1 ./scripts/test.sh
 
-      - name: Build release configuration
-        run: swift build -c release
-
-      - name: Build ad-hoc candidate App
-        run: ./scripts/build-app.sh
-
-      - name: Verify candidate App structure
-        run: ./scripts/verify-app.sh "dist/Remote Mic.app"
-
-      - name: Package CI candidate
+      - name: Build and verify ad-hoc candidate DMG
         run: |
-          version="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - Resources/Info.plist)"
-          /usr/bin/ditto -c -k --keepParent \
-            "dist/Remote Mic.app" \
-            "dist/Remote-Mic-$version-ci.zip"
+          ./scripts/build-dmg.sh
+          ./scripts/verify-dmg.sh
 
       - name: Upload CI candidate
         uses: actions/upload-artifact@v4
         with:
-          name: mac-preview-${{ github.sha }}
-          path: dist/Remote-Mic-*-ci.zip
+          name: ${{ matrix.artifact }}-${{ github.sha }}
+          path: |
+            ${{ matrix.variant == 'intel' && 'dist/intel/Remote-Mic-*-Intel.dmg' || 'dist/Remote-Mic-*.dmg' }}
+            ${{ matrix.variant == 'intel' && 'dist/intel/Remote-Mic-*-Intel.dmg.sha256' || 'dist/Remote-Mic-*.dmg.sha256' }}
+            ${{ matrix.variant == 'intel' && 'dist/intel/Install Remote Mic Intel.pkg' || 'dist/Install Remote Mic.pkg' }}
+            ${{ matrix.variant == 'intel' && 'dist/intel/Uninstall Remote Mic Intel.pkg' || 'dist/Uninstall Remote Mic.pkg' }}
           if-no-files-found: error
           retention-days: 14

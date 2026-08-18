@@ -515,6 +515,7 @@ enum ButtonAction: String, CaseIterable, Codable, Identifiable {
     case commandRedo
     case commandFind
     case commandSave
+    case commandDelete
     case arrowUp
     case arrowDown
     case arrowLeft
@@ -565,6 +566,7 @@ enum ButtonAction: String, CaseIterable, Codable, Identifiable {
         case .commandRedo: return "Command-Shift-Z"
         case .commandFind: return "Command-F"
         case .commandSave: return "Command-S"
+        case .commandDelete: return localization.text("action.command_delete")
         case .arrowUp: return localization.text("action.arrow_up")
         case .arrowDown: return localization.text("action.arrow_down")
         case .arrowLeft: return localization.text("action.arrow_left")
@@ -622,8 +624,8 @@ enum ButtonAction: String, CaseIterable, Codable, Identifiable {
         switch self {
         case .disabled, .escape, .returnKey, .commandReturn, .shiftReturn, .commandCopy,
              .commandPaste, .commandClose, .commandQuit, .commandCut, .commandSelectAll,
-             .commandUndo, .commandRedo, .commandFind, .commandSave, .arrowUp, .arrowDown,
-             .arrowLeft, .arrowRight, .deleteBackward:
+             .commandUndo, .commandRedo, .commandFind, .commandSave, .commandDelete,
+             .arrowUp, .arrowDown, .arrowLeft, .arrowRight, .deleteBackward:
             return .basicKeys
         case .showDesktop, .contextMenu, .appSwitcher, .volumeUp, .volumeDown, .volumeMute,
              .playPause, .previousCommandLeft, .nextCommandRight, .toggleLongRecording:
@@ -653,6 +655,7 @@ enum ButtonAction: String, CaseIterable, Codable, Identifiable {
             .commandRedo,
             .commandFind,
             .commandSave,
+            .commandDelete,
             .previousCommandLeft,
             .nextCommandRight,
         ].contains(self) && presetApplication == nil && !isAppInternal

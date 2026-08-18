@@ -5,6 +5,156 @@ import Testing
 
 @Suite("Settings page regression")
 struct SettingsPageRegressionTests {
+    @Test func applicationEditMenuPreservesStandardTextEditingShortcuts() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let appSource = try String(
+            contentsOf: root.appendingPathComponent("Sources/RemoteMic/RemoteMicApp.swift"),
+            encoding: .utf8
+        )
+        for key in ["copy:", "paste:", "cut:", "undo:", "redo:", "selectAll:"] {
+            #expect(appSource.contains("action: \"\(key)\""))
+        }
+        #expect(appSource.contains("item.target = nil"))
+        #expect(appSource.contains("common.action.copy"))
+        #expect(appSource.contains("common.action.select_all"))
+    }
+
+    @Test func versionTapRevealRequiresFiveConsecutiveTaps() {
+        var counter = VersionTapRevealCounter()
+
+        for expectedCount in 1...4 {
+            let revealed = counter.registerTap()
+            #expect(!revealed)
+            #expect(counter.tapCount == expectedCount)
+        }
+
+        let revealed = counter.registerTap()
+        #expect(revealed)
+        #expect(counter.tapCount == 0)
+        let revealedAgain = counter.registerTap()
+        #expect(!revealedAgain)
+        #expect(counter.tapCount == 1)
+    }
+
+    @Test func privateFeatureFallbackRemainsCompletelyHiddenWithoutPackage() {
+        #if !canImport(SayAllAI)
+        let privateFeature = PrivateFeatureIntegration(localeIdentifier: "zh-Hans")
+
+        #expect(!privateFeature.isAvailable)
+        #expect(!privateFeature.isFeatureVisible)
+        #expect(!privateFeature.shouldShowEnrollment)
+        #endif
+    }
+
+    @Test func nearbyMobileListenerOnlyStartsFromAUserConnectionEntry() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: root.appendingPathComponent("Sources/RemoteMic/BridgeAppModel.swift"),
+            encoding: .utf8
+        )
+
+        let startup = try #require(source.range(of: "func startIfNeeded()"))
+        let stop = try #require(source.range(
+            of: "func stop()",
+            range: startup.upperBound..<source.endIndex
+        ))
+        let startupSource = source[startup.lowerBound..<stop.lowerBound]
+        #expect(!startupSource.contains("phoneRemoteServer.start()"))
+        #expect(!startupSource.contains("watchBluetoothServer.start()"))
+
+        let phoneEntry = try #require(source.range(of: "func enablePhoneRemoteConnection()"))
+        let watchEntry = try #require(source.range(
+            of: "func enableWatchRemoteConnection()",
+            range: phoneEntry.upperBound..<source.endIndex
+        ))
+        let phoneEntrySource = source[phoneEntry.lowerBound..<watchEntry.lowerBound]
+        #expect(phoneEntrySource.contains("phoneRemoteServer.start()"))
+        #expect(phoneEntrySource.contains("watchBluetoothServer.start()"))
+
+        let webEntry = try #require(source.range(
+            of: "func enableWebRemoteConnection()",
+            range: watchEntry.upperBound..<source.endIndex
+        ))
+        let watchEntrySource = source[watchEntry.lowerBound..<webEntry.lowerBound]
+        #expect(watchEntrySource.contains("enablePhoneRemoteConnection()"))
+        #expect(source.contains("func disablePhoneRemoteConnection()"))
+        #expect(source.contains("phoneRemoteServer.stop()"))
+        #expect(source.contains("watchBluetoothServer.stop()"))
+        #expect(source.contains("watchBluetoothServer.updateButtonTitles(titles)"))
+        #expect(source.contains("func togglePhoneRemoteConnection()"))
+        #expect(source.contains("LocalizedMessage(\"connection.phone.cancel_waiting\")"))
+        #expect(source.contains("response == .alertThirdButtonReturn"))
+        #expect(source.contains("guard let self, self.isPhoneRemoteConnectionEnabled else"))
+        #expect(source.contains("guard self.isPhoneRemoteConnectionEnabled else"))
+    }
+
+    @Test func iphoneAndWatchVoiceSessionsRemainSourceIsolated() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: root.appendingPathComponent("Sources/RemoteMic/BridgeAppModel.swift"),
+            encoding: .utf8
+        )
+
+        #expect(source.contains("case nearbyPhone"))
+        #expect(source.contains("case nearbyWatch"))
+        #expect(source.contains("phoneRemoteServer.onVoiceStartResult"))
+        #expect(source.contains("startPhoneVoice(source: .nearbyPhone)"))
+        #expect(source.contains("stopPhoneVoice(source: .nearbyPhone)"))
+        #expect(source.contains("watchBluetoothServer.onVoiceStartResult"))
+        #expect(source.contains("startPhoneVoice(source: .nearbyWatch)"))
+        #expect(source.contains("stopPhoneVoice(source: .nearbyWatch)"))
+        #expect(source.contains("return .busy"))
+        #expect(!source.contains("startPhoneVoice(source: .nearby)"))
+    }
+
+    @Test func mobileConnectionStatusMeetsFontAndSnapshotGates() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let settingsSource = try String(
+            contentsOf: root.appendingPathComponent("Sources/RemoteMic/SettingsView.swift"),
+            encoding: .utf8
+        )
+        let appSource = try String(
+            contentsOf: root.appendingPathComponent("Sources/RemoteMic/RemoteMicApp.swift"),
+            encoding: .utf8
+        )
+        let rendererSource = try String(
+            contentsOf: root.appendingPathComponent(
+                "Sources/RemoteMic/SettingsScreenshotRenderer.swift"
+            ),
+            encoding: .utf8
+        )
+
+        let noInvite = try #require(settingsSource.range(
+            of: "Text(\"connection.phone.no_invite_badge\")"
+        ))
+        let noInviteBlock = settingsSource[noInvite.lowerBound...]
+            .prefix(180)
+        #expect(noInviteBlock.contains(".font(.system(size: 12, weight: .semibold))"))
+
+        let statusPill = try #require(settingsSource.range(of: "private struct StatusPill"))
+        let statusPillBlock = settingsSource[statusPill.lowerBound...]
+            .prefix(420)
+        #expect(statusPillBlock.contains(".font(.system(size: 12, weight: .semibold))"))
+        #expect(appSource.contains("REMOTE_MIC_SETTINGS_SCREENSHOT_DIR"))
+        #expect(rendererSource.contains("width >= 800"))
+        #expect(rendererSource.contains("height >= 650"))
+        for section in ["connection", "mapping", "statistics", "permissions", "about"] {
+            #expect(rendererSource.contains(".\(section)"))
+        }
+    }
+
     @Test func settingsWindowDragsOnlyFromDedicatedTopArea() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -164,6 +314,10 @@ struct SettingsPageRegressionTests {
             contentsOf: root.appendingPathComponent("Sources/RemoteMic/RemoteMappingCanvas.swift"),
             encoding: .utf8
         )
+        let bridgeSource = try String(
+            contentsOf: root.appendingPathComponent("Sources/RemoteMic/BridgeAppModel.swift"),
+            encoding: .utf8
+        )
         let source = settingsSource + mappingCanvasSource
 
         for requiredAction in [
@@ -174,7 +328,8 @@ struct SettingsPageRegressionTests {
             "model.selectDoubaoAudioDevice()",
             "model.openDoubaoDriverInstructions(using: localization)",
             "model.setVoiceFnTapModeEnabled",
-            "model.enablePhoneRemoteConnection()",
+            "model.togglePhoneRemoteConnection()",
+            "model.toggleWatchRemoteConnection()",
             "copyTestFlightPublicBetaLink()",
             "requestWebRemoteSession()",
             "settings.clearTrustedPhoneIdentities()",
@@ -190,6 +345,35 @@ struct SettingsPageRegressionTests {
         }
 
         #expect(source.contains("AppLinks.testFlightPublicBeta"))
+        let phoneEntry = try #require(source.range(of: "connection.phone.ios_title"))
+        let watchEntry = try #require(source.range(of: "connection.watch.title"))
+        let webEntry = try #require(source.range(
+            of: "connection.web.title",
+            range: watchEntry.upperBound..<source.endIndex
+        ))
+        #expect(phoneEntry.lowerBound < watchEntry.lowerBound)
+        #expect(watchEntry.lowerBound < webEntry.lowerBound)
+        let mobileEntrySource = source[phoneEntry.lowerBound..<webEntry.lowerBound]
+        #expect(mobileEntrySource.contains("connection.phone.cancel_waiting"))
+        #expect(mobileEntrySource.contains("connection.phone.connected"))
+        #expect(mobileEntrySource.contains("connection.phone.disconnect"))
+        #expect(mobileEntrySource.contains("connection.watch.cancel_waiting"))
+        #expect(mobileEntrySource.contains("connection.watch.connected"))
+        #expect(mobileEntrySource.contains("connection.watch.disconnect"))
+        #expect(mobileEntrySource.contains("model.togglePhoneRemoteConnection()"))
+        #expect(mobileEntrySource.contains("model.toggleWatchRemoteConnection()"))
+        #expect(!mobileEntrySource.contains(".disabled(model.isPhoneRemoteConnectionEnabled)"))
+        #expect(!mobileEntrySource.contains(".disabled(model.isWatchRemoteConnectionEnabled)"))
+        #expect(!mobileEntrySource.contains(".foregroundStyle(.green)"))
+        #expect(mobileEntrySource.contains("tint: model.isPhoneRemoteConnected"))
+        #expect(mobileEntrySource.contains("tint: model.isWatchRemoteConnected"))
+        #expect(mobileEntrySource.contains("? .green"))
+        #expect(mobileEntrySource.contains("model.isPhoneRemoteConnectionEnabled ? .orange"))
+        #expect(mobileEntrySource.contains("model.isWatchRemoteConnectionEnabled ? .orange"))
+        #expect(bridgeSource.contains("@Published private(set) var isPhoneRemoteConnected = false"))
+        #expect(bridgeSource.contains("@Published private(set) var isWatchRemoteConnected = false"))
+        #expect(bridgeSource.contains("phoneRemoteServer.onConnectionStateChange"))
+        #expect(bridgeSource.contains("watchBluetoothServer.onConnectionStateChange"))
         #expect(source.contains("ButtonTrigger.allCases"))
         #expect(source.contains("isMappingSelectionLocked"))
         #expect(!source.contains("ScrollView(.horizontal, showsIndicators: false)"))
@@ -335,5 +519,78 @@ struct SettingsPageRegressionTests {
         #expect(source.contains("privateFeature.enrollmentView()"))
         #expect(!source.contains("deepSeek"))
         #expect(!source.contains("postDictation"))
+
+        let versionSummary = try #require(
+            source.components(separatedBy: "Text(currentVersion)").last?
+                .components(separatedBy: "if case let .available(update)").first
+        )
+        #expect(!versionSummary.contains(".onTapGesture"))
+        #expect(!versionSummary.contains(".gesture"))
+    }
+
+    @Test func macroFeatureUIIsDelegatedWithoutPublishingItsImplementation() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let integration = try String(
+            contentsOf: root.appendingPathComponent(
+                "Sources/RemoteMic/MacroFeatureIntegration.swift"
+            ),
+            encoding: .utf8
+        )
+        let settings = try String(
+            contentsOf: root.appendingPathComponent("Sources/RemoteMic/SettingsView.swift"),
+            encoding: .utf8
+        )
+        let model = try String(
+            contentsOf: root.appendingPathComponent("Sources/RemoteMic/BridgeAppModel.swift"),
+            encoding: .utf8
+        )
+
+        #expect(integration.contains("#if canImport(SayAllMacroRemoteMic)"))
+        #expect(integration.contains("feature.executeBoundMacro"))
+        #expect(integration.contains("feature.hasActiveBinding"))
+        #expect(integration.contains("feature.noteButtonInteraction"))
+        #expect(integration.contains("@Published private(set) var isEditorActive"))
+        #expect(settings.contains("macroFeature.settingsView"))
+        #expect(settings.contains("macroFeature.enrollmentView"))
+        #expect(settings.contains("macroFeature.setEditorActive(selectedSection == .macros)"))
+        #expect(model.contains("return (resolvedProfileID, !self.macroFeature.isEditorActive)"))
+        #expect(model.contains("if macroFeature.isEditorActive"))
+        #expect(!settings.contains("macro_buttons"))
+        #expect(!settings.contains("EarlyAccessController"))
+    }
+
+    @Test func sidebarKeepsTheProductPriorityOrder() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: root.appendingPathComponent("Sources/RemoteMic/SettingsView.swift"),
+            encoding: .utf8
+        )
+        let orderStart = try #require(source.range(of: "private static let sidebarSectionOrder"))
+        let listStart = try #require(source.range(
+            of: "= [",
+            range: orderStart.upperBound..<source.endIndex
+        ))
+        let orderEnd = try #require(source.range(
+            of: "]",
+            range: listStart.upperBound..<source.endIndex
+        ))
+        let orderSource = source[listStart.lowerBound...orderEnd.lowerBound]
+        var cursor = orderSource.startIndex
+
+        for section in [".mapping", ".macros", ".statistics", ".connection", ".permissions", ".about"] {
+            let range = try #require(orderSource.range(
+                of: section,
+                range: cursor..<orderSource.endIndex
+            ))
+            cursor = range.upperBound
+        }
+
+        #expect(source.contains("Self.sidebarSectionOrder.filter"))
     }
 }

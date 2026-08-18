@@ -1,5 +1,4 @@
 import AppKit
-import CryptoKit
 import Foundation
 import Testing
 @testable import RemoteMic
@@ -116,6 +115,7 @@ struct RemoteButtonsTests {
         #expect(ButtonAction.commandCopy.category == .basicKeys)
         #expect(ButtonAction.commandClose.category == .basicKeys)
         #expect(ButtonAction.commandUndo.category == .basicKeys)
+        #expect(ButtonAction.commandDelete.category == .basicKeys)
         #expect(ButtonAction.volumeUp.category == .systemAndMedia)
         #expect(ButtonAction.previousCommandLeft.category == .systemAndMedia)
         #expect(ButtonAction.nextCommandRight.category == .systemAndMedia)
@@ -139,6 +139,7 @@ struct RemoteButtonsTests {
         #expect(!ButtonAction.commandRedo.allowsRepeat)
         #expect(!ButtonAction.commandFind.allowsRepeat)
         #expect(!ButtonAction.commandSave.allowsRepeat)
+        #expect(!ButtonAction.commandDelete.allowsRepeat)
         #expect(!ButtonAction.previousCommandLeft.allowsRepeat)
         #expect(!ButtonAction.nextCommandRight.allowsRepeat)
         #expect(ButtonAction.arrowUp.allowsRepeat)
@@ -481,6 +482,7 @@ struct RemoteButtonsTests {
             (.commandRedo, 6, [.maskCommand, .maskShift]),
             (.commandFind, 3, .maskCommand),
             (.commandSave, 1, .maskCommand),
+            (.commandDelete, 51, .maskCommand),
             (.previousCommandLeft, 123, .maskCommand),
             (.nextCommandRight, 124, .maskCommand),
         ]
@@ -1320,7 +1322,7 @@ struct RemoteButtonsTests {
             encoding: .utf8
         )
         #expect(source.contains("settings.registerHIDRemote(fingerprint: fingerprint)"))
-        #expect(source.contains("return (resolvedProfileID, true)"))
+        #expect(source.contains("return (resolvedProfileID, !self.macroFeature.isEditorActive)"))
         #expect(!source.contains("pendingHIDBindingProfileID"))
     }
 
@@ -1471,30 +1473,6 @@ struct RemoteButtonsTests {
 
         restored.clearTrustedPhoneIdentities()
         #expect(AppSettings(defaults: defaults).trustedPhoneIdentityFingerprints.isEmpty)
-    }
-
-    @Test func phoneIdentityProofMustMatchTheCurrentSessionKey() throws {
-        let identity = P256.Signing.PrivateKey()
-        let firstSessionKey = Data(repeating: 0x11, count: 32)
-        let secondSessionKey = Data(repeating: 0x22, count: 32)
-        let signature = try identity.signature(
-            for: PhoneRemoteIdentityVerifier.proof(for: firstSessionKey)
-        )
-
-        let verified = PhoneRemoteIdentityVerifier.verify(
-            identityPublicKey: identity.publicKey.rawRepresentation.base64EncodedString(),
-            identitySignature: signature.rawRepresentation.base64EncodedString(),
-            sessionPublicKey: firstSessionKey
-        )
-        guard case .verified = verified else {
-            Issue.record("Expected a valid identity proof")
-            return
-        }
-        #expect(PhoneRemoteIdentityVerifier.verify(
-            identityPublicKey: identity.publicKey.rawRepresentation.base64EncodedString(),
-            identitySignature: signature.rawRepresentation.base64EncodedString(),
-            sessionPublicKey: secondSessionKey
-        ) == .invalid)
     }
 
     @Test func updateAndLaunchPreferencesPersistAndImportCompatibly() throws {
@@ -2162,6 +2140,14 @@ struct RemoteButtonsTests {
         selection.useStableFeed()
         #expect(selection.feedURLString(checksForPreReleaseUpdates: true) == stableFeed)
         #expect(selection.feedURLString(checksForPreReleaseUpdates: false) == stableFeed)
+    }
+
+    @Test func intelUpdateSelectionUsesTheIntelAppcastNameForPreReleaseResolution() {
+        let selection = UpdateFeedSelection(
+            stableFeedURLString: "https://example.com/releases/latest/download/appcast-intel.xml"
+        )
+
+        #expect(selection.appcastAssetName == "appcast-intel.xml")
     }
 
     @Test func secondaryTriggerActionsPersistAndResetWithoutChangingSingleClick() throws {

@@ -26,12 +26,58 @@ struct UpdateFeedSelection {
         }
         return stableFeedURLString
     }
+
+    var appcastAssetName: String {
+        guard let stableFeedURLString,
+              let name = URL(string: stableFeedURLString)?.lastPathComponent,
+              !name.isEmpty
+        else { return "appcast.xml" }
+        return name
+    }
+}
+
+struct UpdateCheckPolicy: Equatable {
+    let checksForPreReleaseUpdates: Bool
+
+    var startsUpdaterAutomatically: Bool {
+        !checksForPreReleaseUpdates
+    }
+
+    var allowsBackgroundUpdatePrompts: Bool {
+        !checksForPreReleaseUpdates
+    }
+
+    var refreshesAboutInformationOnAppear: Bool {
+        !checksForPreReleaseUpdates
+    }
 }
 
 @main
 enum RemoteMicApp {
     @MainActor
     static func main() {
+        if let screenshotDirectory = ProcessInfo.processInfo.environment[
+            "REMOTE_MIC_SETTINGS_SCREENSHOT_DIR"
+        ] {
+            do {
+                try SettingsScreenshotRenderer.renderAll(
+                    to: URL(fileURLWithPath: screenshotDirectory, isDirectory: true),
+                    sizeValue: ProcessInfo.processInfo.environment[
+                        "REMOTE_MIC_SETTINGS_SCREENSHOT_SIZE"
+                    ],
+                    appearanceName: ProcessInfo.processInfo.environment[
+                        "REMOTE_MIC_SETTINGS_SCREENSHOT_APPEARANCE"
+                    ],
+                    languageName: ProcessInfo.processInfo.environment[
+                        "REMOTE_MIC_SETTINGS_SCREENSHOT_LANGUAGE"
+                    ]
+                )
+            } catch {
+                fputs("Settings screenshot rendering failed: \(error)\n", stderr)
+                exit(EXIT_FAILURE)
+            }
+            return
+        }
         if let screenshotDirectory = ProcessInfo.processInfo.environment[
             "REMOTE_MIC_ONBOARDING_SCREENSHOT_DIR"
         ] {
@@ -89,7 +135,7 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
     private var updateFeedRefreshTimer: Timer?
     private var updaterStarted = false
     private lazy var updaterController = SPUStandardUpdaterController(
-        startingUpdater: true,
+        startingUpdater: false,
         updaterDelegate: self,
         userDriverDelegate: nil
     )
@@ -119,6 +165,7 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
         observePhoneRemoteButtonTitles()
         installWorkspaceWakeObserver()
         model.privateFeature.refreshAccessIfNeeded()
+        model.macroFeature.refreshAccessIfNeeded()
         if OnboardingLaunchPolicy.shouldStartRuntime(
             isComplete: model.settings.isOnboardingComplete,
             step: model.settings.onboardingStep
@@ -168,6 +215,7 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
 
     func applicationDidBecomeActive(_ notification: Notification) {
         model.privateFeature.refreshAccessIfNeeded()
+        model.macroFeature.refreshAccessIfNeeded()
     }
 
     func applicationShouldHandleReopen(
@@ -201,6 +249,7 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.model.privateFeature.refreshAccessIfNeeded()
+                self?.model.macroFeature.refreshAccessIfNeeded()
             }
         }
     }
@@ -252,6 +301,7 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
         menu.addItem(menuItem("menu.check_for_updates", action: #selector(checkForUpdates)))
         menu.addItem(menuItem("about.support.github", action: #selector(openGitHub)))
         menu.addItem(menuItem("about.support.website", action: #selector(openWebsite)))
+        menu.addItem(menuItem("about.support.feedback", action: #selector(openFeedback)))
         menu.addItem(.separator())
         menu.addItem(menuItem("common.action.quit", action: #selector(quit)))
         statusMenu = menu
@@ -289,7 +339,36 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
         fileMenuItem.submenu = fileMenu
         mainMenu.addItem(fileMenuItem)
 
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: localization.text("menu.edit"))
+        editMenu.addItem(responderMenuItem("common.action.undo", action: "undo:", keyEquivalent: "z"))
+        editMenu.addItem(responderMenuItem("common.action.redo", action: "redo:", keyEquivalent: "Z"))
+        editMenu.addItem(.separator())
+        editMenu.addItem(responderMenuItem("common.action.cut", action: "cut:", keyEquivalent: "x"))
+        editMenu.addItem(responderMenuItem("common.action.copy", action: "copy:", keyEquivalent: "c"))
+        editMenu.addItem(responderMenuItem("common.action.paste", action: "paste:", keyEquivalent: "v"))
+        editMenu.addItem(.separator())
+        editMenu.addItem(responderMenuItem("common.action.select_all", action: "selectAll:", keyEquivalent: "a"))
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
         NSApp.mainMenu = mainMenu
+    }
+
+    private func responderMenuItem(
+        _ titleKey: String,
+        action: String,
+        keyEquivalent: String
+    ) -> NSMenuItem {
+        let item = NSMenuItem(
+            title: localization.text(titleKey),
+            action: Selector(action),
+            keyEquivalent: keyEquivalent
+        )
+        item.keyEquivalentModifierMask = [.command]
+        // A nil target lets AppKit route the standard editing action to the focused text field.
+        item.target = nil
+        return item
     }
 
     private func installApplicationKeyboardShortcuts() {
@@ -396,6 +475,9 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
                 self.model.privateFeature.updateLocaleIdentifier(
                     self.localization.locale.identifier
                 )
+                self.model.macroFeature.updateLocaleIdentifier(
+                    self.localization.locale.identifier
+                )
                 self.configureApplicationMenu()
                 self.rebuildStatusMenu()
                 self.updateInformation.reloadReleaseNotes(
@@ -441,9 +523,16 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
                 updateFeedSelection.useStableFeed()
                 updateInformation.reset()
                 configurePreReleaseFeedRefreshTimer(isEnabled: isEnabled)
-                startUpdaterIfNeeded()
-                updaterController.updater.resetUpdateCycleAfterShortDelay()
-                refreshUpdateInformation()
+                let policy = UpdateCheckPolicy(checksForPreReleaseUpdates: isEnabled)
+                if updaterStarted {
+                    updaterController.updater.automaticallyChecksForUpdates =
+                        policy.allowsBackgroundUpdatePrompts
+                }
+                if policy.startsUpdaterAutomatically {
+                    startUpdaterIfNeeded()
+                    updaterController.updater.resetUpdateCycleAfterShortDelay()
+                    refreshUpdateInformation()
+                }
             }
             .store(in: &subscriptions)
     }
@@ -455,12 +544,16 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
             startUpdaterIfNeeded()
             return
         }
-        refreshPreReleaseFeed(startUpdaterAfterRefresh: true)
+        refreshPreReleaseFeed()
     }
 
     private func startUpdaterIfNeeded() {
         guard !updaterStarted else { return }
-        _ = updaterController
+        updaterController.updater.automaticallyChecksForUpdates =
+            UpdateCheckPolicy(
+                checksForPreReleaseUpdates: model.settings.checksForPreReleaseUpdates
+            ).allowsBackgroundUpdatePrompts
+        updaterController.startUpdater()
         updaterStarted = true
     }
 
@@ -478,42 +571,41 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
         }
     }
 
-    private func refreshPreReleaseFeed(
-        startUpdaterAfterRefresh: Bool = false,
-        resetUpdateCycleWhenChanged: Bool = false
-    ) {
+    private func refreshPreReleaseFeed(resetUpdateCycleWhenChanged: Bool = false) {
         updateFeedRefreshTask?.cancel()
         updateFeedRefreshTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let resolvedURL = try await Self.latestReleaseFeedURL()
+                let resolvedFeed = try await Self.latestReleaseFeed(
+                    assetName: updateFeedSelection.appcastAssetName,
+                    includePreRelease: true
+                )
+                let resolvedURL = resolvedFeed.url
                 guard !Task.isCancelled, model.settings.checksForPreReleaseUpdates else { return }
                 let feedChanged = updateFeedSelection.preReleaseFeedURL != resolvedURL
                 updateFeedSelection.usePreReleaseFeed(resolvedURL)
                 AppLogger.shared.write("UPDATE FEED prerelease_enabled=true resolved=true")
-                if startUpdaterAfterRefresh {
-                    startUpdaterIfNeeded()
-                } else if feedChanged, resetUpdateCycleWhenChanged {
+                if feedChanged, resetUpdateCycleWhenChanged, updaterStarted {
                     updaterController.updater.resetUpdateCycleAfterShortDelay()
                 }
             } catch {
                 guard !Task.isCancelled else { return }
-                let feedChanged = updateFeedSelection.preReleaseFeedURL != nil
                 updateFeedSelection.useStableFeed()
                 AppLogger.shared.write(
-                    "UPDATE FEED prerelease_enabled=true resolved=false fallback=stable "
+                    "UPDATE FEED prerelease_enabled=true resolved=false fallback=none "
                         + "error=\(error.localizedDescription)"
                 )
-                if startUpdaterAfterRefresh {
-                    startUpdaterIfNeeded()
-                } else if feedChanged, resetUpdateCycleWhenChanged {
+                if updaterStarted, resetUpdateCycleWhenChanged {
                     updaterController.updater.resetUpdateCycleAfterShortDelay()
                 }
             }
         }
     }
 
-    private static func latestReleaseFeedURL() async throws -> URL {
+    private static func latestReleaseFeed(
+        assetName: String,
+        includePreRelease: Bool
+    ) async throws -> UpdateFeedResolver.ResolvedFeed {
         var request = URLRequest(url: releasesURL)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 15
@@ -525,7 +617,11 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
         guard let response = response as? HTTPURLResponse, response.statusCode == 200 else {
             throw UpdateFeedResolutionError.invalidResponse
         }
-        return try UpdateFeedResolver.latestAppcastURL(from: data)
+        return try UpdateFeedResolver.latestFeed(
+            from: data,
+            assetName: assetName,
+            includePreRelease: includePreRelease
+        )
     }
 
     func feedURLString(for updater: SPUUpdater) -> String? {
@@ -664,25 +760,41 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
         updateFeedRefreshTask?.cancel()
         updateFeedRefreshTask = Task { [weak self] in
             guard let self else { return }
-            if model.settings.checksForPreReleaseUpdates {
-                do {
-                    let resolvedURL = try await Self.latestReleaseFeedURL()
-                    guard !Task.isCancelled,
-                          model.settings.checksForPreReleaseUpdates
-                    else { return }
-                    updateFeedSelection.usePreReleaseFeed(resolvedURL)
+            updateInformation.beginChecking()
+            let includePreRelease = model.settings.checksForPreReleaseUpdates
+            do {
+                let resolvedFeed = try await Self.latestReleaseFeed(
+                    assetName: updateFeedSelection.appcastAssetName,
+                    includePreRelease: includePreRelease
+                )
+                guard !Task.isCancelled,
+                      model.settings.checksForPreReleaseUpdates == includePreRelease
+                else { return }
+                if includePreRelease {
+                    updateFeedSelection.usePreReleaseFeed(resolvedFeed.url)
                     AppLogger.shared.write("UPDATE CHECK prerelease_enabled=true resolved=true")
-                } catch {
-                    guard !Task.isCancelled else { return }
+                } else {
                     updateFeedSelection.useStableFeed()
-                    AppLogger.shared.write(
-                        "UPDATE CHECK prerelease_enabled=true resolved=false fallback=stable "
-                            + "user_alert=false "
-                            + "error=\(error.localizedDescription)"
-                    )
+                    AppLogger.shared.write("UPDATE CHECK prerelease_enabled=false resolved=true")
                 }
-            } else {
+
+                let currentVersion = Bundle.main.object(
+                    forInfoDictionaryKey: "CFBundleShortVersionString"
+                ) as? String ?? ""
+                guard UpdateVersion.isNewer(resolvedFeed.version, than: currentVersion) else {
+                    startUpdaterIfNeeded()
+                    updateInformation.setUpToDate()
+                    return
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
                 updateFeedSelection.useStableFeed()
+                updateInformation.setUnavailable()
+                AppLogger.shared.write(
+                    "UPDATE CHECK prerelease_enabled=\(includePreRelease) resolved=false "
+                        + "user_alert=false error=\(error.localizedDescription)"
+                )
+                return
             }
             startUpdaterIfNeeded()
             guard !updaterController.updater.sessionInProgress else { return }
@@ -752,6 +864,10 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
 
     @objc private func openWebsite() {
         NSWorkspace.shared.open(localization.localizedWebsiteURL)
+    }
+
+    @objc private func openFeedback() {
+        NSWorkspace.shared.open(AppLinks.feedback)
     }
 
     @objc private func closeKeyWindow() {

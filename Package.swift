@@ -3,13 +3,25 @@ import Foundation
 import PackageDescription
 
 var packageDependencies: [Package.Dependency] = [
-    .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.4")
+    .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.4"),
+    .package(
+        url: "https://github.com/GetSayAll/sayall-mac-remote.git",
+        revision: "04a1bf2b713ee98c4d2c07cd690bb4b26288a82d"
+    ),
 ]
 var remoteMicDependencies: [Target.Dependency] = [
     "AudioExceptionGuard",
     .product(name: "Sparkle", package: "Sparkle"),
+    .product(name: "SayAllMacRemoteCore", package: "sayall-mac-remote"),
+    .product(name: "SayAllMacRemoteUI", package: "sayall-mac-remote"),
 ]
-var remoteMicTestDependencies: [Target.Dependency] = ["RemoteMic"]
+var remoteMicTestDependencies: [Target.Dependency] = [
+    "RemoteMic",
+    .product(name: "SayAllMacRemoteCore", package: "sayall-mac-remote"),
+]
+let macOSPlatform: SupportedPlatform = ProcessInfo.processInfo.environment["RELEASE_VARIANT"] == "intel"
+    ? .macOS(.v13)
+    : .macOS(.v14)
 
 if let privateFeaturePath = ProcessInfo.processInfo.environment[
     "SAYALL_AI_PACKAGE_PATH"
@@ -20,6 +32,18 @@ if let privateFeaturePath = ProcessInfo.processInfo.environment[
     packageDependencies.append(.package(path: privateFeaturePath))
     remoteMicDependencies.append(
         .product(name: "SayAllAI", package: packageIdentity)
+    )
+}
+
+if let macroPlatformPath = ProcessInfo.processInfo.environment[
+    "SAYALL_MACRO_PLATFORM_PATH"
+], !macroPlatformPath.isEmpty {
+    let packageIdentity = URL(fileURLWithPath: macroPlatformPath)
+        .lastPathComponent
+        .lowercased()
+    packageDependencies.append(.package(path: macroPlatformPath))
+    remoteMicDependencies.append(
+        .product(name: "SayAllMacroRemoteMic", package: packageIdentity)
     )
 }
 
@@ -37,7 +61,7 @@ if let hardwareSimulationPath = ProcessInfo.processInfo.environment[
 
 let package = Package(
     name: "RemoteMic",
-    platforms: [.macOS(.v14)],
+    platforms: [macOSPlatform],
     products: [
         .executable(
             name: "RemoteMic",

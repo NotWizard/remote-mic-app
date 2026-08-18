@@ -1,23 +1,63 @@
 # Version History
 
-## 1.8.17 (Pre-release)
+## 1.8.25 (Pre-release)
 
-- Fixed how custom-shortcut modifiers are injected: they were sent as ordinary key presses that did not actually change the system modifier state, so a shortcut could both trigger the target tool and leak to the frontmost app (for example opening DingTalk's settings). Modifiers are now sent as real modifier-state changes, matching a physical keypress.
-
-## 1.8.16 (Pre-release)
-
-- Fixed custom shortcuts losing which side of a modifier was pressed. Recording something like "Right Command + comma" was stored as a plain Command, so third-party tools that distinguish the left and right keys never responded. The side is now preserved, the matching physical modifier is held when the shortcut is sent, and the shortcut display shows L/R.
-- Please re-record the affected shortcut after updating: older recordings do not contain the side information.
-
-## 1.8.15 (Pre-release)
-
-- Fixed the voice trigger key sometimes sticking when set to Right Command/Option/Shift (which could prevent stopping, toggle VoiceOver, or make the system laggy). The modifier is now injected as a press/release tied to the start/stop of speech, and is always released on disconnect, quit, or switching the trigger key.
-- Using a right-side modifier as the trigger key requires Accessibility permission; without it the voice button no longer causes those side effects and will prompt for authorization.
-
-## 1.8.14 (Pre-release)
-
+- Opening an installer for the wrong architecture now clearly points to the correct version for the current Mac.
+- Updated SayAll branding and standardized the in-app website link on sayall.app.
+- Improved remote pairing guidance in first-run setup, including waking the remote and holding Home and Menu together to enter pairing mode.
+- Improved iPhone, Apple Watch, and web voice connections with isolated sources, accurate connection status, and a way to cancel a connection.
+- Added a feedback entry to the menu bar for reporting issues from the app.
 - The voice button's trigger key is now selectable: Fn (default, compatible with Doubao and system dictation), Right Command, Right Option, or Right Shift, so it can drive third-party voice apps that start on a right-side modifier.
 - Added a "Use the remote's built-in microphone" switch, on by default. When it is off, the voice button acts only as a trigger and no longer captures the remote's microphone, so an external microphone can be used as the input source in noisy places.
+- Fixed the voice trigger key sometimes sticking when set to Right Command/Option/Shift (which could prevent stopping, toggle VoiceOver, or make the system laggy). The modifier is now injected as a press/release tied to the start/stop of speech, and is always released on disconnect, quit, or switching the trigger key. Using a right-side modifier as the trigger key requires Accessibility permission; without it the voice button no longer causes those side effects and will prompt for authorization.
+- Fixed custom shortcuts losing which side of a modifier was pressed. Recording something like "Right Command + comma" was stored as a plain Command, so third-party tools that distinguish the left and right keys never responded. The side is now preserved, the matching physical modifier is held when the shortcut is sent, and the shortcut display shows L/R. Please re-record the affected shortcut after updating: older recordings do not contain the side information.
+- Fixed how custom-shortcut modifiers are injected: they were sent as ordinary key presses that did not actually change the system modifier state, so a shortcut could both trigger the target tool and leak to the frontmost app (for example opening DingTalk's settings). Modifiers are now sent as real modifier-state changes, matching a physical keypress.
+
+## 1.8.23 (Pre-release)
+
+- Fixed an issue that could cause Remote Mic to quit when opening Quick Commands from the sidebar.
+- Improved Quick Commands resource loading in installed builds so the page opens reliably after a fresh install or upgrade.
+
+## 1.8.22 (Pre-release)
+
+- Fixed raw localization identifiers appearing on selected settings pages and tightened the input and status layout.
+- Text fields in Settings now support standard Mac editing shortcuts for copy, paste, cut, undo, redo, and select all.
+- Updated the shared Apple Watch direct-connection component with improved Bluetooth fallback and notification retry behavior. Discovery, authorization, buttons, and microphone flows still require real-device validation.
+
+## 1.8.21 (Pre-release)
+
+- Preview updates no longer show update prompts from background checks; open About and check manually to view preview candidates.
+- Stable updates keep their automatic checks and update prompts.
+
+## 1.8.20 (Pre-release)
+
+- Improved access to selected preview features from the About page while keeping the feature switches off until you enable them.
+- Improved preview-feature setup feedback and state handling.
+
+## 1.8.19 (Pre-release)
+
+- Added a dedicated Apple Watch entry to Connection & Voice, with on-demand nearby-device waiting and cancellation. Real-device validation of Apple Watch discovery, authorization, buttons, and microphone remains pending.
+- Added a Quick Commands preview for combining app launch, app wait, keyboard shortcut, and input-focus steps, then assigning them to remote buttons.
+- Improved state restoration and error feedback for selected preview features, and fixed a possible unexpected exit when opening Settings for the first time from the final package.
+
+## 1.8.12 (Pre-release)
+
+- Improved the speed and reliability of Mac installer and automatic-update downloads. Existing versions can continue checking for updates, with GitHub downloads retained as a fallback.
+
+## 1.8.11 (Pre-release)
+
+- Fixed newly paired remotes appearing connected in macOS while the setup guide kept searching until Remote Mic was restarted. Returning from Bluetooth Settings now restarts discovery and connects the new device automatically.
+- Fixed ordinary remote buttons sometimes doing nothing while macOS system actions such as volume still worked. When only some low-level button services are usable, remotes that passed the safety checks can continue working.
+- The setup guide now shows the real button-monitoring status and provides a retry action, refreshes audio devices after returning to Remote Mic, and rechecks permissions, the remote, and audio output before opening the main panel.
+- Remote cards show the full Xiaomi Bluetooth Remote 2 and Xiaomi Bluetooth Remote 2 Pro names with clearer battery and charging icons. The File menu can now open the log folder directly.
+
+## 1.8.10 (Pre-release)
+
+- Existing users no longer have to repeat the first-run setup after upgrading. New installations, unfinished setup, and a setup guide started again by the user still complete the required checks.
+- The setup guide no longer requires MiRemoteV 2ch. BlackHole 2ch and other installed audio devices can be selected and continued once their output is ready.
+- Fixed the setup guide continuing to show that it was searching for the remote after an upgrade even though a physical remote button had already been received. Bluetooth recovery now starts automatically.
+- Fixed the compatible microphone remaining active after the remote disconnected and potentially staying attached to meeting or voice-input apps. Disconnecting now ends the active voice session and releases the virtual audio device.
+- Removed the ineffective physical-remote recording renewal attempt to avoid unnecessary forced stops and reconnects. The roughly one-minute recording limit remains under investigation.
 
 ## 1.8.9 (Pre-release)
 
