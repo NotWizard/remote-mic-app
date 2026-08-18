@@ -7,6 +7,11 @@ fi
 
 RELEASE_VARIANT="${RELEASE_VARIANT:-apple-silicon}"
 
+# Fork builds must not point at upstream's appcast: Sparkle would treat upstream's
+# signed release as an update and silently overwrite this fork, discarding every
+# fork change. This fork publishes no appcast asset, so the check fails harmlessly.
+RELEASE_FEED_HOST="${RELEASE_FEED_HOST:-https://github.com/NotWizard/remote-mic-app}"
+
 case "$RELEASE_VARIANT" in
   apple-silicon)
     RELEASE_ARCH="arm64"
@@ -16,7 +21,7 @@ case "$RELEASE_VARIANT" in
     RELEASE_OUTPUT_DIR="$ROOT/dist"
     RELEASE_ASSET_SUFFIX=""
     RELEASE_APPCAST_NAME="appcast.xml"
-    RELEASE_FEED_URL="https://github.com/HD838A/remote-mic-app/releases/latest/download/appcast.xml"
+    RELEASE_FEED_URL="$RELEASE_FEED_HOST/releases/latest/download/appcast.xml"
     RELEASE_INSTALL_PACKAGE_NAME="Install Remote Mic.pkg"
     RELEASE_UNINSTALL_PACKAGE_NAME="Uninstall Remote Mic.pkg"
     RELEASE_CONFIG_PLIST="$ROOT/packaging/release-variants/apple-silicon.plist"
@@ -31,7 +36,7 @@ case "$RELEASE_VARIANT" in
     RELEASE_OUTPUT_DIR="$ROOT/dist/intel"
     RELEASE_ASSET_SUFFIX="-Intel"
     RELEASE_APPCAST_NAME="appcast-intel.xml"
-    RELEASE_FEED_URL="https://github.com/HD838A/remote-mic-app/releases/latest/download/appcast-intel.xml"
+    RELEASE_FEED_URL="$RELEASE_FEED_HOST/releases/latest/download/appcast-intel.xml"
     RELEASE_INSTALL_PACKAGE_NAME="Install Remote Mic Intel.pkg"
     RELEASE_UNINSTALL_PACKAGE_NAME="Uninstall Remote Mic Intel.pkg"
     RELEASE_CONFIG_PLIST="$ROOT/packaging/release-variants/intel.plist"

@@ -39,9 +39,9 @@
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 	<key>SUFeedURL</key>
-	<string>https://github.com/HD838A/remote-mic-app/releases/latest/download/appcast.xml</string>
+	<string>https://github.com/NotWizard/remote-mic-app/releases/latest/download/appcast.xml</string>
 	<key>SUEnableAutomaticChecks</key>
-	<true/>
+	<false/>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
 	<key>SUAutomaticallyUpdate</key>

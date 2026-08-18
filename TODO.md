@@ -7,7 +7,9 @@
   - README 中英文已去除二维码、加群、TestFlight 和官网推广内容，改为说明 fork 血缘、本分支改动与构建方式，并补充 GitHub 标签。
 - [ ] 本 fork 的 CI 与二进制发布前置条件
   - `.github/workflows/` 仍会 checkout `sayall-ai`、`sayall-macro-platform`、`sayall-mac-remote` 三个私有仓库，本仓库无访问权限，fork CI 必然失败。需要决定是禁用这些 workflow、改为只跑 stub 构建，还是申请访问权限。
-  - 构建产物仍使用上游 Bundle ID `com.hd838a.RemoteMic`，`SUFeedURL` 指向上游 appcast 且自动检查开启。安装后 Sparkle 会用上游签名版静默覆盖本分支构建，改动全部丢失。发布任何可安装的分支版本前，必须先改掉 Bundle ID 与更新源，或关闭自动更新。
+  - [x] Sparkle 静默覆盖风险已解决：`scripts/release-variant.sh` 与 `Resources/Info.plist` 的更新源已改为本仓库，`SUEnableAutomaticChecks` 关闭，`scripts/verify-app.sh` 的断言同步更新。已可发布 ad-hoc DMG，代价是升级需手动下载。
+  - Gatekeeper 拦截未解决：没有 Apple Developer ID 证书，只能 ad-hoc 签名，首次打开需右键“打开”。需要付费开发者账号才能签名并公证。
+  - Bundle ID 仍为上游的 `com.hd838a.RemoteMic`，本分支构建与上游安装包会互相覆盖。若要与上游共存需改 Bundle ID，代价是蓝牙、输入监控、辅助功能权限全部重新授权。
 
 - [x] 统一 SayAll 品牌、官网与当前上架战略
   - App 英文名称统一为 `SayAll`，中文名称继续使用“无线麦”，官网统一为 `https://sayall.app`。

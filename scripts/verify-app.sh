@@ -136,7 +136,10 @@ test "$(plutil -extract CFBundleDisplayName raw -o - "$PLIST")" = "SayAll"
 test "$(plutil -extract CFBundleIconFile raw -o - "$PLIST")" = "AppIcon"
 test -n "$(plutil -extract NSBluetoothAlwaysUsageDescription raw -o - "$PLIST")"
 test "$(plutil -extract SUFeedURL raw -o - "$PLIST")" = "$RELEASE_FEED_URL"
-test "$(plutil -extract SUEnableAutomaticChecks raw -o - "$PLIST")" = "true"
+# This fork disables automatic checks on purpose. Together with the fork-owned feed
+# URL above it keeps Sparkle from replacing a fork build with upstream's signed
+# release. Manual "Check for Updates…" still works.
+test "$(plutil -extract SUEnableAutomaticChecks raw -o - "$PLIST")" = "false"
 test "$(plutil -extract SUScheduledCheckInterval raw -o - "$PLIST")" = "86400"
 test "$(plutil -extract SUAutomaticallyUpdate raw -o - "$PLIST")" = "false"
 test "$(plutil -extract SUAllowsAutomaticUpdates raw -o - "$PLIST")" = "false"

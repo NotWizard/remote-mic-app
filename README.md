@@ -85,25 +85,28 @@
 
 ## 安装
 
-本分支是源码分支，不提供预编译安装包。
+本分支在 [Releases](https://github.com/NotWizard/remote-mic-app/releases) 提供 Apple Silicon 的 `Remote-Mic-<版本>.dmg`（ad-hoc 签名，未公证）。
 
-需要开箱即用的安装包时，请使用上游的官方发布渠道：[HD838A/remote-mic-app Releases](https://github.com/HD838A/remote-mic-app/releases)。上游正式包使用 Apple Developer ID 签名并已完成 Apple 公证；本分支的改动不包含在其中。
+打开 DMG 后双击唯一的 `Install Remote Mic.pkg`。安装器会安装 Remote Mic，并检查现有 `MiRemoteV 2ch`：健康且兼容时原样保留，缺失或不可用时才安装或更新。
 
-Apple Silicon 安装包名为 `Remote-Mic-<版本>.dmg`，Intel 安装包名为 `Remote-Mic-<版本>-Intel.dmg`，两者不能混用。打开 DMG 后双击唯一的 `Install Remote Mic.pkg`（Intel 使用 `Install Remote Mic Intel.pkg`）。安装器会安装 Remote Mic，并检查现有 `MiRemoteV 2ch`：健康且兼容时原样保留，缺失或不可用时才安装或更新。
+**首次打开必须右键点击 App 图标并选择“打开”**，或先执行 `xattr -dr com.apple.quarantine "/Applications/Remote Mic.app"`。本分支没有 Apple Developer ID 证书，只能 ad-hoc 签名，Gatekeeper 会拦截直接双击。
+
+需要经过 Apple 签名和公证的安装包时，请使用[上游官方 Releases](https://github.com/HD838A/remote-mic-app/releases)，但其中不含本分支的改动。
+
+### 自动更新已关闭
+
+本分支构建把 Sparkle 更新源指向本仓库，并关闭了自动检查。原因是构建产物仍沿用上游的 Bundle ID `com.hd838a.RemoteMic`：若继续指向上游 appcast，Sparkle 会把上游的签名版本当作新版本，**静默覆盖本分支构建**，4 项改动随之全部丢失。
+
+代价是升级需要手动下载新的 DMG。本分支不发布 appcast 资产，因此手动“检查更新…”也不会找到版本。
 
 ### 从源码构建
 
 ```zsh
-swift test          # 244 项单元测试
-./scripts/test.sh   # 42 项项目自检
-./scripts/build-app.sh   # 产出 dist/Remote Mic.app（ad-hoc 签名）
+swift test               # 244 项单元测试
+./scripts/test.sh        # 42 项项目自检
+./scripts/build-app.sh   # 产出 dist/Remote Mic.app
+./scripts/build-dmg.sh   # 产出 dist/Remote-Mic-<版本>.dmg 与 .sha256
 ```
-
-ad-hoc 签名的 App 会被 Gatekeeper 拦截，首次打开需要右键“打开”。
-
-### 为什么本分支不发布二进制
-
-构建产物仍沿用上游的 Bundle ID `com.hd838a.RemoteMic`，且 `SUFeedURL` 指向上游的 appcast、自动检查默认开启。这意味着安装本分支构建的 App 后，Sparkle 会去上游拉取更新，并用**上游的签名版本静默覆盖它**，本分支的全部改动随之丢失。要发布可安装的分支版本，必须先改掉 Bundle ID 和更新源，或关闭自动更新。
 
 ## 首次使用
 

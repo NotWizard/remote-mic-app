@@ -85,25 +85,28 @@ Not done: none of the four changes above have been **verified end-to-end on real
 
 ## Installation
 
-This fork is source-only and ships no prebuilt installer.
+This fork publishes an Apple Silicon `Remote-Mic-<version>.dmg` on [Releases](https://github.com/NotWizard/remote-mic-app/releases), ad-hoc signed and not notarized.
 
-For a ready-to-run package, use upstream's official channel: [HD838A/remote-mic-app Releases](https://github.com/HD838A/remote-mic-app/releases). Upstream stable packages are signed with an Apple Developer ID and notarized by Apple; this fork's changes are not included in them.
+Open the DMG and double-click the single `Install Remote Mic.pkg`. The installer installs Remote Mic and checks the existing `MiRemoteV 2ch`: a healthy, compatible driver is kept as is; a missing or unusable one is installed or updated.
 
-The Apple Silicon installer is named `Remote-Mic-<version>.dmg`; the Intel installer is named `Remote-Mic-<version>-Intel.dmg`. They are not interchangeable. Open the DMG and double-click the single `Install Remote Mic.pkg` (`Install Remote Mic Intel.pkg` on Intel). The installer installs Remote Mic and checks the existing `MiRemoteV 2ch`: a healthy, compatible driver is kept as is; a missing or unusable one is installed or updated.
+**The first launch requires right-click → Open** on the app icon, or run `xattr -dr com.apple.quarantine "/Applications/Remote Mic.app"` first. This fork has no Apple Developer ID certificate and can only sign ad-hoc, which Gatekeeper blocks on a plain double-click.
+
+If you need an Apple-signed and notarized package, use [upstream's official Releases](https://github.com/HD838A/remote-mic-app/releases) — they do not contain this fork's changes.
+
+### Automatic updates are disabled
+
+Fork builds point Sparkle at this repository and disable automatic checks. Build output still carries upstream's bundle identifier `com.hd838a.RemoteMic`, so leaving the feed on upstream's appcast would let Sparkle treat upstream's signed release as an update and **silently overwrite the fork build**, discarding all four changes.
+
+The trade-off is manual upgrades: download the newer DMG yourself. This fork publishes no appcast asset, so even a manual "Check for Updates…" finds nothing.
 
 ### Build from source
 
 ```zsh
-swift test          # 244 unit tests
-./scripts/test.sh   # 42 project self-checks
-./scripts/build-app.sh   # produces dist/Remote Mic.app (ad-hoc signed)
+swift test               # 244 unit tests
+./scripts/test.sh        # 42 project self-checks
+./scripts/build-app.sh   # produces dist/Remote Mic.app
+./scripts/build-dmg.sh   # produces dist/Remote-Mic-<version>.dmg and .sha256
 ```
-
-Gatekeeper blocks ad-hoc signed apps, so the first launch needs right-click → Open.
-
-### Why this fork ships no binary
-
-Build output still carries upstream's bundle identifier `com.hd838a.RemoteMic`, and `SUFeedURL` points at upstream's appcast with automatic checks enabled. Installing a fork build therefore lets Sparkle fetch upstream's release and **silently overwrite it with upstream's signed version**, discarding every fork change. Shipping an installable fork build requires changing the bundle identifier and feed URL, or disabling automatic updates, first.
 
 ## First use
 
