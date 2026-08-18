@@ -4,10 +4,11 @@ import PackageDescription
 
 var packageDependencies: [Package.Dependency] = [
     .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.4"),
-    .package(
-        url: "https://github.com/GetSayAll/sayall-mac-remote.git",
-        revision: "04a1bf2b713ee98c4d2c07cd690bb4b26288a82d"
-    ),
+    // Upstream points this at the private GetSayAll/sayall-mac-remote at revision
+    // 04a1bf2b713ee98c4d2c07cd690bb4b26288a82d. This fork has no read access, which
+    // made SwiftPM fail during dependency resolution, so it resolves to a local stub
+    // instead. Restore the remote revision here if access is granted.
+    .package(path: "Vendor/sayall-mac-remote"),
 ]
 var remoteMicDependencies: [Target.Dependency] = [
     "AudioExceptionGuard",

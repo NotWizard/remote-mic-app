@@ -1,5 +1,14 @@
 # TODO
 
+- [x] 同步上游 v1.8.25 并让本 fork 可独立构建
+  - 上游 198 个提交已合并；本分支 4 项改动（可配置语音触发键、遥控器麦克风收音开关、右修饰键卡住修复、自定义快捷键修饰键左右侧修复）全部保留，Swift 源码自动合并无冲突。
+  - 上游把私有组件 `GetSayAll/sayall-mac-remote` 声明为无条件依赖，本仓库无访问权限，SwiftPM 解析阶段即失败。已改为指向 [`Vendor/sayall-mac-remote`](Vendor/sayall-mac-remote) 本地 stub，`swift build`、`swift test`（244 项）、`scripts/test.sh`（42 项）和 Release 构建均通过。详见 [`Bugs/2026-08-18-private-mac-remote-package-fork-access.md`](Bugs/2026-08-18-private-mac-remote-package-fork-access.md)。
+  - stub 使 iPhone、Apple Watch、网页版三条连接路径在本分支构建中不可用；其对话方（iOS App、Watch App、中继服务器）均在私有仓库，无法自行实现。RC003 实体遥控器全部功能不受影响。
+  - README 中英文已去除二维码、加群、TestFlight 和官网推广内容，改为说明 fork 血缘、本分支改动与构建方式，并补充 GitHub 标签。
+- [ ] 本 fork 的 CI 与二进制发布前置条件
+  - `.github/workflows/` 仍会 checkout `sayall-ai`、`sayall-macro-platform`、`sayall-mac-remote` 三个私有仓库，本仓库无访问权限，fork CI 必然失败。需要决定是禁用这些 workflow、改为只跑 stub 构建，还是申请访问权限。
+  - 构建产物仍使用上游 Bundle ID `com.hd838a.RemoteMic`，`SUFeedURL` 指向上游 appcast 且自动检查开启。安装后 Sparkle 会用上游签名版静默覆盖本分支构建，改动全部丢失。发布任何可安装的分支版本前，必须先改掉 Bundle ID 与更新源，或关闭自动更新。
+
 - [x] 统一 SayAll 品牌、官网与当前上架战略
   - App 英文名称统一为 `SayAll`，中文名称继续使用“无线麦”，官网统一为 `https://sayall.app`。
   - Mac App 继续采用独立下载方式维护，Mac App Store 上架暂时暂停；当前只推进 iOS App 与内嵌 Apple Watch App 上架，且不拆分商店专用版本。

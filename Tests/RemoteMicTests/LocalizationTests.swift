@@ -29,14 +29,8 @@ struct LocalizationTests {
         let expectedURL = "https://testflight.apple.com/join/J8k8fb7v"
         #expect(AppLinks.testFlightPublicBeta.absoluteString == expectedURL)
 
-        for readmeName in ["README.md", "README.en.md"] {
-            let readme = try String(
-                contentsOf: repositoryRoot.appendingPathComponent(readmeName),
-                encoding: .utf8
-            )
-            #expect(readme.contains(expectedURL))
-        }
-
+        // This fork's READMEs drop the TestFlight entry along with the rest of the
+        // promotional material, so only the repo-wide uniqueness scan below applies.
         let expression = try NSRegularExpression(
             pattern: #"https://testflight\.apple\.com/join/[A-Za-z0-9]+"#
         )
@@ -77,14 +71,13 @@ struct LocalizationTests {
     }
 
     @Test func readmesUseVersionIndependentMacDownloadEntries() throws {
-        let stableURL = "https://download.sayall.app/mac"
-        let previewURL = "https://github.com/HD838A/remote-mic-app/releases"
+        let upstreamReleasesURL = "https://github.com/HD838A/remote-mic-app/releases"
         let expectations = [
-            ("README.md", "## 下载与安装", "- 最新正式版（Apple Silicon）：", "- 最新预览版（Apple Silicon / Intel）："),
-            ("README.en.md", "## Download and install", "- Latest stable release (Apple Silicon):", "- Latest pre-release (Apple Silicon / Intel):"),
+            ("README.md", "## 安装"),
+            ("README.en.md", "## Installation"),
         ]
 
-        for (readmeName, sectionHeading, stablePrefix, previewPrefix) in expectations {
+        for (readmeName, sectionHeading) in expectations {
             let readme = try String(
                 contentsOf: repositoryRoot.appendingPathComponent(readmeName),
                 encoding: .utf8
@@ -92,18 +85,13 @@ struct LocalizationTests {
             let sectionStart = try #require(readme.range(of: sectionHeading))
             let remainingReadme = readme[sectionStart.upperBound...]
             let sectionEnd = remainingReadme.range(of: "\n## ")?.lowerBound ?? readme.endIndex
-            let downloadSection = readme[sectionStart.lowerBound..<sectionEnd]
-            let stableEntry = try #require(
-                downloadSection.split(separator: "\n").first { $0.hasPrefix(stablePrefix) }
-            )
-            let previewEntry = try #require(
-                downloadSection.split(separator: "\n").first { $0.hasPrefix(previewPrefix) }
-            )
+            let installSection = readme[sectionStart.lowerBound..<sectionEnd]
 
-            #expect(stableEntry.contains("](\(stableURL))"))
-            #expect(!stableEntry.contains("/releases/"))
-            #expect(previewEntry.contains("](\(previewURL))"))
-            #expect(!previewEntry.contains("/releases/tag/"))
+            // The fork ships no installer, so the section points at upstream's release
+            // index. It must stay version-independent: a pinned tag or asset URL rots.
+            #expect(installSection.contains("](\(upstreamReleasesURL))"))
+            #expect(!installSection.contains("/releases/tag/"))
+            #expect(!installSection.contains("/releases/download/"))
         }
     }
 

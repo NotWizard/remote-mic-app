@@ -1,25 +1,14 @@
 import Foundation
 import Testing
-@testable import SayAllMacRemoteCore
 @testable import RemoteMic
 
-@Suite("Apple Watch BLE voice journey")
+// The upstream suite also drove WatchBluetoothRemoteServer's internal session state.
+// That type now comes from the fork-local stub, so exercising it would assert against
+// fake behavior. Only the wiring assertions below still mean something here; they
+// catch an upstream merge silently dropping the watch voice path or its audio logging.
+@Suite("Apple Watch voice wiring")
 struct WatchBluetoothVoiceJourneyTests {
-    @Test func firstVoiceAttemptWaitsForMacPreparationBeforeVoiceReady() throws {
-        let server = WatchBluetoothRemoteServer()
-        var macVoicePrepared = false
-        server.onVoiceStartResult = { completion in
-            macVoicePrepared = true
-            completion(.started)
-        }
-        server._testConfigureSession(approved: true, voiceActive: false)
-
-        server._testHandleMessage(WatchBluetoothMessage(type: "voiceStart"))
-
-        #expect(macVoicePrepared)
-        #expect(server._testSessionState().voiceActive)
-        #expect(server._testPendingNotifications().map(\.type) == ["voiceReady"])
-
+    @Test func bridgeRoutesWatchVoiceStartAndLogsAudio() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
