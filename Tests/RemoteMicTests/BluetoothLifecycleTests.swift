@@ -110,4 +110,65 @@ struct BluetoothLifecycleTests {
         #expect(!XiaomiVoiceRemoteNameMatcher.matches("MI RC2"))
         #expect(!XiaomiVoiceRemoteNameMatcher.matches("小米"))
     }
+
+    /// Walks a wall clock across an absence and counts the `connect()` calls the policy
+    /// authorizes. Every advance comes from a delay the policy declares, so the counts
+    /// below are derived from shipping code rather than restated from the bug report.
+    private func authorizedConnectAttempts(
+        policy: BluetoothReconnectPolicy.PendingConnectPolicy,
+        remoteAbsentFor seconds: TimeInterval
+    ) -> Int {
+        var elapsed: TimeInterval = 0
+        var attempts = 0
+        while elapsed <= seconds {
+            attempts += 1
+            elapsed += BluetoothReconnectPolicy.pendingConnectDeadline
+            guard let retryDelay = BluetoothReconnectPolicy
+                .retryDelayAfterPendingConnectDeadline(policy: policy)
+            else { break }
+            elapsed += retryDelay
+        }
+        return attempts
+    }
+
+    @Test func anAbsentRemoteCostsOneConnectAttemptInsteadOfHundredsPerHour() {
+        let hour: TimeInterval = 3_600
+        // What shipped before the fix: an 8 s self-imposed timeout plus a 3 s pause.
+        let selfTimeout = BluetoothReconnectPolicy.PendingConnectPolicy
+            .restartAttempt(retryDelay: 3)
+
+        #expect(authorizedConnectAttempts(policy: selfTimeout, remoteAbsentFor: hour) == 328)
+        #expect(authorizedConnectAttempts(
+            policy: selfTimeout,
+            remoteAbsentFor: 24 * hour
+        ) == 7_855)
+
+        // A pending request is completed by the Bluetooth controller, so the length of
+        // the absence must not change the cost.
+        #expect(authorizedConnectAttempts(
+            policy: BluetoothReconnectPolicy.pendingConnect,
+            remoteAbsentFor: hour
+        ) == 1)
+        #expect(authorizedConnectAttempts(
+            policy: BluetoothReconnectPolicy.pendingConnect,
+            remoteAbsentFor: 24 * hour
+        ) == 1)
+        #expect(BluetoothReconnectPolicy.retryDelayAfterPendingConnectDeadline() == nil)
+    }
+
+    @Test func aGenuineFailureStillBuysAFreshAttempt() {
+        // `didFailToConnect`, `didDisconnectPeripheral` and a failed post-connect
+        // handshake are not the pending case: the controller already gave up, so the
+        // bridge must keep paying for new attempts instead of going dead.
+        var elapsed: TimeInterval = 0
+        var attempts = 0
+        while elapsed <= 60 {
+            attempts += 1
+            elapsed += BluetoothReconnectPolicy.failureRetryDelay
+        }
+        #expect(attempts == 21)
+        #expect(BluetoothReconnectPolicy.retryDelayAfterPendingConnectDeadline(
+            policy: .restartAttempt(retryDelay: BluetoothReconnectPolicy.failureRetryDelay)
+        ) == BluetoothReconnectPolicy.failureRetryDelay)
+    }
 }

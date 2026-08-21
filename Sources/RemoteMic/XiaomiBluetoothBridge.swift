@@ -117,7 +117,7 @@ final class XiaomiBluetoothBridge: NSObject {
     private var batteryStatusCharacteristic: CBCharacteristic?
     private var subscribedUUIDs = Set<CBUUID>()
     private var reconnectWorkItem: DispatchWorkItem?
-    private var connectionTimeoutWorkItem: DispatchWorkItem?
+    private var pendingConnectDeadlineWorkItem: DispatchWorkItem?
     private var initializationTimeoutWorkItem: DispatchWorkItem?
     private var capabilitiesRequested = false
     private var capabilitiesConfirmed = false
@@ -181,12 +181,12 @@ final class XiaomiBluetoothBridge: NSObject {
         central?.stopScan()
         closeMicrophoneIfNeeded()
         if let central, let peripheral, peripheral.state != .disconnected {
-            requestedReconnectDelay = nil
             lifecycle = .disconnecting(lifecycle.generation ?? generationCounter)
             central.cancelPeripheralConnection(peripheral)
-        } else {
-            finishAttempt(reconnectAfter: nil)
         }
+        // Release synchronously rather than waiting for a disconnect callback: a request
+        // that never completed may never produce one, and that would retain the central.
+        finishAttempt(reconnectAfter: nil)
         resetSession()
         state = .stopped
     }
@@ -196,21 +196,22 @@ final class XiaomiBluetoothBridge: NSObject {
         reconnectWorkItem?.cancel()
         central?.stopScan()
         if let central, let peripheral, peripheral.state != .disconnected {
-            requestedReconnectDelay = 0.1
             lifecycle = .disconnecting(lifecycle.generation ?? generationCounter)
-            state = .reconnecting
             central.cancelPeripheralConnection(peripheral)
-            return
         }
+        state = .reconnecting
         finishAttempt(reconnectAfter: 0.1)
     }
 
     private func beginConnectionCycle() {
-        guard shouldRun, central == nil else { return }
+        guard shouldRun, !hasConnectionCycleInFlight else { return }
         generationCounter &+= 1
         let generation = generationCounter
         lifecycle = .scanning(generation)
-        let manager = CBCentralManager(
+        // One central for the bridge's lifetime. Rebuilding it per cycle discards the
+        // pending `connect()` that the Bluetooth controller would have completed on its
+        // own, and misses a remote that appears while the bridge is between centrals.
+        let manager = central ?? CBCentralManager(
             delegate: self,
             queue: .main,
             options: [CBCentralManagerOptionShowPowerAlertKey: true]
@@ -220,6 +221,27 @@ final class XiaomiBluetoothBridge: NSObject {
         if manager.state == .poweredOn {
             discoverOrScan(using: manager, generation: generation)
         }
+    }
+
+    /// True while a cycle owns the central. This is the old `central == nil` guard
+    /// restated as a phase check, now that the central outlives a single cycle:
+    /// `finishAttempt` only ever leaves `.stopped` or `.waitingReconnect` behind.
+    private var hasConnectionCycleInFlight: Bool {
+        switch lifecycle {
+        case .stopped, .waitingReconnect:
+            return false
+        default:
+            return true
+        }
+    }
+
+    /// Tears the central down. Only the stop path reaches this; every other caller keeps
+    /// it so an outstanding connection request stays registered with the controller.
+    private func releaseCentral() {
+        central?.stopScan()
+        central?.delegate = nil
+        central = nil
+        centralGeneration = nil
     }
 
     @discardableResult
@@ -333,7 +355,7 @@ final class XiaomiBluetoothBridge: NSObject {
         candidate.delegate = proxy
         lifecycle = .connecting(generation)
         state = .connecting
-        startConnectionTimeout(generation: generation)
+        startPendingConnectDeadline(generation: generation)
         central.connect(candidate, options: nil)
         AppLogger.shared.write("BLE CONNECTING source=\(source) name=\(candidate.name ?? "unknown")")
     }
@@ -352,8 +374,8 @@ final class XiaomiBluetoothBridge: NSObject {
         batteryCharacteristic = nil
         batteryStatusCharacteristic = nil
         subscribedUUIDs.removeAll()
-        connectionTimeoutWorkItem?.cancel()
-        connectionTimeoutWorkItem = nil
+        pendingConnectDeadlineWorkItem?.cancel()
+        pendingConnectDeadlineWorkItem = nil
         initializationTimeoutWorkItem?.cancel()
         initializationTimeoutWorkItem = nil
         capabilitiesRequested = false
@@ -386,14 +408,24 @@ final class XiaomiBluetoothBridge: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: work)
     }
 
-    private func startConnectionTimeout(generation: UInt64) {
-        connectionTimeoutWorkItem?.cancel()
+    private func startPendingConnectDeadline(generation: UInt64) {
+        pendingConnectDeadlineWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self,
                   self.shouldRun,
                   self.currentGeneration() == generation,
                   self.lifecycle == .connecting(generation)
             else { return }
+            guard let retryDelay = BluetoothReconnectPolicy
+                .retryDelayAfterPendingConnectDeadline()
+            else {
+                // The request stays with the Bluetooth controller, which completes it
+                // when the remote comes back into range. Only the label changes, and the
+                // phase stays `.connecting` so that completion is still accepted.
+                self.state = .reconnecting
+                AppLogger.shared.write("BLE CONNECT PENDING waiting_for_remote")
+                return
+            }
             AppLogger.shared.write("BLE CONNECT TIMEOUT")
             self.state = .reconnecting
             if let central = self.central,
@@ -401,10 +433,13 @@ final class XiaomiBluetoothBridge: NSObject {
                peripheral.state != .disconnected {
                 central.cancelPeripheralConnection(peripheral)
             }
-            self.finishAttempt(reconnectAfter: 3)
+            self.finishAttempt(reconnectAfter: retryDelay)
         }
-        connectionTimeoutWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: work)
+        pendingConnectDeadlineWorkItem = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + BluetoothReconnectPolicy.pendingConnectDeadline,
+            execute: work
+        )
     }
 
     private func resetSession() {
@@ -425,24 +460,22 @@ final class XiaomiBluetoothBridge: NSObject {
         reconnectWorkItem?.cancel()
         state = .reconnecting
         if let central, let peripheral, peripheral.state != .disconnected {
-            requestedReconnectDelay = 3
+            requestedReconnectDelay = BluetoothReconnectPolicy.failureRetryDelay
             lifecycle = .disconnecting(lifecycle.generation ?? generationCounter)
             central.cancelPeripheralConnection(peripheral)
             return
         }
-        finishAttempt(reconnectAfter: 3)
+        finishAttempt(reconnectAfter: BluetoothReconnectPolicy.failureRetryDelay)
     }
 
     private func finishAttempt(reconnectAfter delay: TimeInterval?) {
         let finishedGeneration = lifecycle.generation ?? generationCounter
         central?.stopScan()
-        central?.delegate = nil
-        central = nil
-        centralGeneration = nil
         requestedReconnectDelay = nil
         resetPeripheral()
 
         guard shouldRun, let delay else {
+            releaseCentral()
             lifecycle = .stopped
             return
         }
@@ -452,7 +485,6 @@ final class XiaomiBluetoothBridge: NSObject {
         let work = DispatchWorkItem { [weak self] in
             guard let self,
                   self.shouldRun,
-                  self.central == nil,
                   self.lifecycle == .waitingReconnect(finishedGeneration)
             else { return }
             self.beginConnectionCycle()
@@ -685,7 +717,8 @@ extension XiaomiBluetoothBridge: CBCentralManagerDelegate {
             lifecycle = .scanning(generation)
             state = .bluetoothUnavailable(LocalizedMessage("bluetooth.status.off"))
         case .unauthorized:
-            resetSession()
+            resetPeripheral()
+            lifecycle = .scanning(generation)
             state = .bluetoothUnavailable(LocalizedMessage("bluetooth.status.permission_denied"))
         case .unsupported:
             state = .bluetoothUnavailable(LocalizedMessage("bluetooth.status.unsupported"))
@@ -730,8 +763,8 @@ extension XiaomiBluetoothBridge: CBCentralManagerDelegate {
               let generation = centralGeneration,
               lifecycle.acceptsDidConnect(generation: generation)
         else { return }
-        connectionTimeoutWorkItem?.cancel()
-        connectionTimeoutWorkItem = nil
+        pendingConnectDeadlineWorkItem?.cancel()
+        pendingConnectDeadlineWorkItem = nil
         lifecycle = .discovering(generation)
         state = .discovering
         startInitializationTimeout(generation: generation)
@@ -754,7 +787,7 @@ extension XiaomiBluetoothBridge: CBCentralManagerDelegate {
               lifecycle.acceptsDidFailToConnect(generation: generation)
         else { return }
         AppLogger.shared.write("BLE CONNECT FAILED error=\(error?.localizedDescription ?? "unknown")")
-        let delay = shouldRun ? (requestedReconnectDelay ?? 3) : nil
+        let delay = shouldRun ? (requestedReconnectDelay ?? BluetoothReconnectPolicy.failureRetryDelay) : nil
         finishAttempt(reconnectAfter: delay)
         if !shouldRun { state = .stopped }
     }
@@ -799,7 +832,7 @@ extension XiaomiBluetoothBridge: CBCentralManagerDelegate {
             "BLE DISCONNECTED phase=\(lifecycle) cached_identifier_cleared=\(shouldDiscardCachedIdentity) " +
                 "error=\(error?.localizedDescription ?? "none")"
         )
-        let delay = shouldRun ? (requestedReconnectDelay ?? 3) : nil
+        let delay = shouldRun ? (requestedReconnectDelay ?? BluetoothReconnectPolicy.failureRetryDelay) : nil
         finishAttempt(reconnectAfter: delay)
         if !shouldRun { state = .stopped }
     }

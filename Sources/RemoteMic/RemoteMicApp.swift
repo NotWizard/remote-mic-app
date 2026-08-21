@@ -250,6 +250,9 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
             Task { @MainActor [weak self] in
                 self?.model.privateFeature.refreshAccessIfNeeded()
                 self?.model.macroFeature.refreshAccessIfNeeded()
+                // Sleep can invalidate a pending connection request without any
+                // delegate callback, and nothing else polls, so re-arm it here.
+                self?.model.reconnect()
             }
         }
     }

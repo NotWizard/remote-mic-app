@@ -116,3 +116,50 @@ enum ATVVSessionGate {
         return now < cancelledAt.addingTimeInterval(cancelledOpenSuppressionInterval)
     }
 }
+
+/// Decides whether a connection attempt that has not completed yet deserves another
+/// `connect()`.
+///
+/// `CBCentralManager.connect(_:options:)` has no timeout by design: the request stays
+/// with the Bluetooth controller and is completed when the peripheral comes back into
+/// range, with no polling and no repeated radio cost from the app. An app-side deadline
+/// that cancels the request and starts over replaces that free wait with a busy loop —
+/// a resident install logged 21675 attempts over 11 days, and while the remote was
+/// actually out of range the loop sustained roughly 317 attempts per hour.
+enum BluetoothReconnectPolicy {
+    /// What the bridge does with a `connect()` that is still outstanding once
+    /// `pendingConnectDeadline` has elapsed.
+    enum PendingConnectPolicy: Equatable {
+        /// Cancel the outstanding request and issue a new `connect()` after the delay.
+        /// Every elapsed deadline costs one more attempt.
+        case restartAttempt(retryDelay: TimeInterval)
+        /// Leave the request with the Bluetooth controller. No further `connect()` is
+        /// issued; the attempt completes on its own when the remote returns.
+        case keepOutstandingRequest
+    }
+
+    /// Seconds after which the bridge stops telling the user it is still connecting.
+    /// Reaching it only changes the displayed state; whether the request survives is
+    /// `pendingConnect`.
+    static let pendingConnectDeadline: TimeInterval = 8
+
+    /// Delay before a new attempt after a genuine failure, a disconnect, or a failed
+    /// post-connect handshake — cases where the controller has already given up.
+    static let failureRetryDelay: TimeInterval = 3
+
+    /// The behaviour the bridge applies.
+    static let pendingConnect: PendingConnectPolicy = .keepOutstandingRequest
+
+    /// Delay before the next `connect()` when `pendingConnectDeadline` elapses with the
+    /// request still outstanding, or `nil` when that request must be left alone.
+    static func retryDelayAfterPendingConnectDeadline(
+        policy: PendingConnectPolicy = pendingConnect
+    ) -> TimeInterval? {
+        switch policy {
+        case .restartAttempt(let retryDelay):
+            return retryDelay
+        case .keepOutstandingRequest:
+            return nil
+        }
+    }
+}

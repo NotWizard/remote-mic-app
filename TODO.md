@@ -9,7 +9,7 @@
 | A1 | **已修复** | 10 处 `try?` 解码失败静默重置用户配置，无日志无 UI，把"首次无数据"与"解码失败"混为一谈。已闭合三部分：日志、`.corrupt` 原始字节备份、按键映射页内联提示。**定位为防御性加固**——无证据表明已有用户命中解码失败，此前那次配置丢失的根因是 HID 就绪（见 `Bugs/2026-08-21-remote-reconnect-loses-custom-button-mapping.md`） | `Sources/RemoteMic/AppSettings.swift` 449–565 与约 690（`firstUseEvents`） |
 | A2 | **已提交** `858bb9c` | `killall coreaudiod` 在 `set -euo pipefail` 下无匹配进程即中止脚本，安装/卸载已完成却报失败 | 4 个安装脚本 |
 | A3 | **已修复** | 日志无轮转、每行开关文件、权限 644；`write` 非 `@autoclosure` 且释放路径缺幂等门，单条消息占日志 47%。折叠经复核否决后改为显式白名单（原启发式会把 1586 行内容不同的消息错误合并，等于把 A6 缺陷推广到 220 类消息）。投影：113242 → 53823 行（−52.5%）、21.49 → 10.59 MB（−50.7%） | `AppLogger.swift:18`、`BridgeAppModel.swift:2074` |
-| A4 | 待开始 | 每轮重建 central + 自建 8s 超时 + 3s 重试，遥控器缺席时 315 次/小时空转；`connect()` 本就永久挂起 | `XiaomiBluetoothBridge.swift:212/389-408/436-462` |
+| A4 | **已修复** | 每轮重建 central + 自建 8s 超时 + 3s 重试，遥控器缺席时 315 次/小时空转；`connect()` 本就永久挂起。改为单 central 常驻、待连请求不再被自我取消、8s 截止时间只改显示状态。缺席 1 小时的连接尝试 **328 → 1**，24 小时 **7855 → 1**（由策略延迟推导，非断言）。复核否决后补两处：唤醒时重新发起（被删掉的 8s 循环原本是睡眠后唯一自愈路径）、`.unauthorized` 分支复位 lifecycle | `XiaomiBluetoothBridge.swift`、`BluetoothLifecycle.swift`、`RemoteMicApp.swift:244` |
 | A5 | 待开始 | `drainCompletion` 单槽被置 nil 却从不调用且作废兜底定时器，`.draining` 无超时出口，语音会话可永久卡死 | `AudioOutput.swift:463/494/516`、`VoiceFnTapSessionController` |
 | A6 | 待开始 | 关键 `return` 无日志或多种原因压成同一条，线上无法定位 | `HIDRemoteMonitor.swift:146/196-205/245-252/668-672` |
 | A7 | 待开始 | 蓝牙桥零行为测试；全库 28% 断言只验证源码文本仍存在 | `XiaomiBluetoothBridge.swift`、`Tests/` |
