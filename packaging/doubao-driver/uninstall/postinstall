@@ -29,7 +29,21 @@ test -f "$PLIST"
 test "$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$PLIST")" = "com.hd838a.MiRemoteV2ch"
 
 /bin/rm -rf -- "$DESTINATION"
-/usr/bin/killall coreaudiod
+# Never abort here: the driver is already removed. pgrep decides the wording so a real
+# failure is never reported as "was not running".
+if ! /usr/bin/pgrep -qx coreaudiod; then
+  installer_message \
+    "系统音频服务当前未运行，无需重启。" \
+    "The system audio service is not running; no restart was needed."
+elif /usr/bin/killall coreaudiod; then
+  installer_message \
+    "已重启系统音频服务。" \
+    "Restarted the system audio service."
+else
+  installer_message \
+    "驱动已移除，但重启系统音频服务失败；请重启 Mac 使其生效。" \
+    "The driver was removed but the system audio service could not be restarted; restart your Mac to finish."
+fi
 installer_message \
   "已卸载 MiRemoteV 2ch。BlackHole 未被修改。" \
   "MiRemoteV 2ch has been uninstalled. BlackHole was not changed."

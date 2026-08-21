@@ -498,6 +498,90 @@ struct BuildSigningTests {
         #expect(process.terminationStatus == 0)
     }
 
+    @Test func audioServiceRestartNeverAbortsInstallerScripts() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+
+        // Static gate: no script may call a process killer as a bare statement, because
+        // under `set -e` a non-matching killall aborts *after* the driver was written.
+        // Matching whole lines is harder to bypass than a prefix check.
+        let bareKiller = try NSRegularExpression(
+            pattern: #"(?m)^[[:space:]]*(?:/usr/bin/)?(?:killall|pkill)[[:space:]]"#
+        )
+        for path in [
+            "scripts/install-doubao-driver.sh",
+            "scripts/uninstall-doubao-driver.sh",
+            "packaging/doubao-driver/install/postinstall",
+            "packaging/doubao-driver/uninstall/postinstall",
+        ] {
+            let source = try String(
+                contentsOf: root.appendingPathComponent(path),
+                encoding: .utf8
+            )
+            #expect(source.contains("set -euo pipefail"))
+            let range = NSRange(source.startIndex..., in: source)
+            #expect(
+                bareKiller.firstMatch(in: source, range: range) == nil,
+                "\(path) calls a process killer as a bare statement"
+            )
+        }
+
+        // Behavioral proof: run the real uninstall script with a killall that always
+        // fails. Before the fix this exited non-zero with the driver already deleted.
+        let work = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("remote-mic-killall-\(UUID().uuidString)")
+        let volume = work.appendingPathComponent("volume")
+        let fakeBin = work.appendingPathComponent("bin")
+        let driver = volume
+            .appendingPathComponent("Library/Audio/Plug-Ins/HAL/MiRemoteV2ch.driver")
+        defer { try? FileManager.default.removeItem(at: work) }
+
+        try FileManager.default.createDirectory(
+            at: driver.appendingPathComponent("Contents"),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: fakeBin,
+            withIntermediateDirectories: true
+        )
+        try #require(
+            [
+                "CFBundleIdentifier": "com.hd838a.MiRemoteV2ch",
+                "CFBundleName": "MiRemoteV2ch",
+            ] as NSDictionary
+        ).write(
+            to: driver.appendingPathComponent("Contents/Info.plist"),
+            atomically: true
+        )
+        for tool in ["killall", "pgrep"] {
+            let stub = fakeBin.appendingPathComponent(tool)
+            try "#!/bin/sh\nexit 1\n".write(to: stub, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755],
+                ofItemAtPath: stub.path
+            )
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = [
+            root.appendingPathComponent("packaging/doubao-driver/uninstall/postinstall").path,
+            "", "", volume.path,
+        ]
+        var environment = ProcessInfo.processInfo.environment
+        environment["PATH"] = "\(fakeBin.path):\(environment["PATH"] ?? "/usr/bin:/bin")"
+        process.environment = environment
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+
+        #expect(process.terminationStatus == 0)
+        #expect(!FileManager.default.fileExists(atPath: driver.path))
+    }
+
     @Test func appDmgIsDragInstallAndDriverPackageNeverCarriesTheApp() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

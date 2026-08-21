@@ -166,7 +166,15 @@ case "$MODE" in
     /usr/bin/grep -Fq 'if [[ "$CURRENT_ARCHITECTURE" != "$EXPECTED_ARCHITECTURE" ]]; then' \
       "$SCRIPTS_DIR/postinstall"
     /usr/bin/grep -Fqx 'if [[ "$DRIVER_CHANGED" -eq 1 ]]; then' "$SCRIPTS_DIR/postinstall"
-    /usr/bin/grep -Fqx '  /usr/bin/killall coreaudiod' "$SCRIPTS_DIR/postinstall"
+    # The restart step must still exist, and must be guarded so a missing coreaudiod
+    # cannot abort the installer after the driver was already written.
+    /usr/bin/grep -Fq '/usr/bin/pgrep -qx coreaudiod' "$SCRIPTS_DIR/postinstall"
+    /usr/bin/grep -Fq 'elif /usr/bin/killall coreaudiod; then' "$SCRIPTS_DIR/postinstall"
+    if /usr/bin/grep -Eq '^[[:space:]]*/usr/bin/killall coreaudiod[[:space:]]*$' \
+      "$SCRIPTS_DIR/postinstall"; then
+      print -u2 "postinstall must not call killall unguarded"
+      exit 1
+    fi
     /usr/sbin/pkgutil --expand-full "$PACKAGE" "$FULL_EXPANDED"
     PAYLOAD_DRIVER="$(/usr/bin/find "$FULL_EXPANDED" -type d -path '*/Library/Application Support/RemoteMic/Installer/MiRemoteV2ch.driver' -print -quit)"
     test -n "$PAYLOAD_DRIVER"
@@ -181,7 +189,13 @@ case "$MODE" in
     fi
     test -x "$EXPANDED/Scripts/postinstall"
     /usr/bin/grep -Fqx '/bin/rm -rf -- "$DESTINATION"' "$EXPANDED/Scripts/postinstall"
-    /usr/bin/grep -Fqx '/usr/bin/killall coreaudiod' "$EXPANDED/Scripts/postinstall"
+    /usr/bin/grep -Fq '/usr/bin/pgrep -qx coreaudiod' "$EXPANDED/Scripts/postinstall"
+    /usr/bin/grep -Fq 'elif /usr/bin/killall coreaudiod; then' "$EXPANDED/Scripts/postinstall"
+    if /usr/bin/grep -Eq '^[[:space:]]*/usr/bin/killall coreaudiod[[:space:]]*$' \
+      "$EXPANDED/Scripts/postinstall"; then
+      print -u2 "uninstall postinstall must not call killall unguarded"
+      exit 1
+    fi
     ;;
   *)
     print -u2 "unknown package mode: $MODE"
