@@ -2327,4 +2327,207 @@ struct RemoteButtonsTests {
         #expect(RemotePowerState.decodeBatteryLevelStatus(Data([0x00, 0x00, 0x00])) == .unknown)
         #expect(RemotePowerState.decodeBatteryLevelStatus(Data([0x00, 0x61])) == nil)
     }
+
+    // MARK: - A6: a suppressed HID step has to say which branch suppressed it
+
+    @Test func hidSuppressionReasonTokensStayDistinctNonEmptyAndGreppable() {
+        let tokens = HIDSuppressionReason.allCases.map(\.rawValue)
+        #expect(!tokens.isEmpty)
+
+        // The closed set exists so two branches cannot render the same text. When they did,
+        // triage of the reconnect report had to exclude a switched-off mapping by reading
+        // UserDefaults off the user's machine, because the log could not say.
+        #expect(Set(tokens).count == tokens.count)
+
+        for token in tokens {
+            #expect(!token.isEmpty)
+            // `reason=<token>` is pulled out of runtime.log by splitting on whitespace, so a
+            // space or a second `=` inside a token would truncate it silently.
+            #expect(!token.contains(" "))
+            #expect(!token.contains("="))
+            #expect(token.allSatisfy { $0.isLowercase || $0.isNumber || $0 == "_" })
+        }
+
+        // Every reason must also survive as its own fold key. Sharing one would move the
+        // collapse the audit found out of the source and into the logger.
+        let keys = tokens.compactMap { LogFold.foldKey(for: "HID INPUT ignored reason=\($0)") }
+        #expect(Set(keys).count == tokens.count)
+    }
+
+    @Test func startRejectionNamesWhichBranchStoppedButtonMapping() throws {
+        let suiteName = "RemoteButtonsTests.startRejection.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settings = AppSettings(defaults: defaults)
+        settings.customMappingEnabled = false
+
+        let sink = HIDLogLineSink()
+        let token = AppLogger.shared.addWriteObserver { sink.record($0) }
+        defer { AppLogger.shared.removeWriteObserver(token) }
+
+        let monitor = HIDRemoteMonitor(
+            settings: settings,
+            ownsEventSuppressor: false,
+            runtimePermissions: { true }
+        )
+
+        // Branch 1: the user switched custom mapping off. This returned in complete silence,
+        // so a log from a machine in this state showed nothing at the decisive moment.
+        monitor.start(powerKeySuppressed: true)
+        AppLogger.shared.flush()
+        let disabledReasons = sink.startRejectionReasons
+        #expect(disabledReasons.contains(HIDSuppressionReason.mappingDisabled.rawValue))
+
+        // Branch 2: mapping is on but the gate refuses. Whichever of the three gate causes
+        // applies on this machine, it must be named, and it must not be mistakable for
+        // branch 1 — that indistinguishability is the defect.
+        sink.reset()
+        settings.customMappingEnabled = true
+        monitor.start(powerKeySuppressed: false)
+        AppLogger.shared.flush()
+        let gatedReasons = sink.startRejectionReasons
+        #expect(!gatedReasons.isEmpty)
+        #expect(!gatedReasons.contains(HIDSuppressionReason.mappingDisabled.rawValue))
+        let gateCauses: Set<String> = [
+            HIDSuppressionReason.inputMonitoringDenied.rawValue,
+            HIDSuppressionReason.accessibilityDenied.rawValue,
+            HIDSuppressionReason.powerKeyNotSuppressed.rawValue,
+        ]
+        #expect(gatedReasons.isSubset(of: gateCauses))
+        monitor.stop()
+    }
+
+    @Test func aPressDeclinedByRoutingIsLoggedAsDeclinedNotAsAMissingProfile() throws {
+        let suiteName = "RemoteButtonsTests.routingDeclined.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settings = AppSettings(defaults: defaults)
+        settings.customMappingEnabled = true
+        settings.setAction(.escape, for: .ok)
+        let profileID = try #require(settings.selectedRemoteProfileID)
+
+        var performedActions = 0
+        let monitor = HIDRemoteMonitor(
+            settings: settings,
+            profileID: profileID,
+            ownsEventSuppressor: false,
+            runtimePermissions: { true },
+            actionPerformer: { _, _, _ in
+                performedActions += 1
+                return true
+            }
+        )
+        monitor.onButtonPressed = { _, _, _ in
+            (profileID: profileID, shouldPerformAction: false)
+        }
+        monitor.connectSimulatedDevice(fingerprint: "a6-routing-declined", profileID: profileID)
+
+        let sink = HIDLogLineSink()
+        let token = AppLogger.shared.addWriteObserver { sink.record($0) }
+        defer { AppLogger.shared.removeWriteObserver(token) }
+
+        monitor.handleSimulatedReport(reportID: 1, data: Data([RemoteButton.ok.hidUsage.lowByte, 0]))
+        AppLogger.shared.flush()
+
+        // This is the user-visible symptom: a press that produces nothing at all.
+        #expect(performedActions == 0)
+        // Routing declining the press and no profile being resolvable shared one silent
+        // `continue`. The log now has to pick the one that actually happened.
+        #expect(sink.lines.contains(
+            "HID INPUT ignored reason=\(HIDSuppressionReason.routingDeclined.rawValue) " +
+                "button=\(RemoteButton.ok.rawValue)"
+        ))
+        #expect(!sink.lines.contains(
+            "HID INPUT ignored reason=\(HIDSuppressionReason.profileUnresolved.rawValue) " +
+                "button=\(RemoteButton.ok.rawValue)"
+        ))
+        monitor.disconnectSimulatedDevice()
+    }
+
+    @Test func thePerReportIgnorePathNamesItsReasonWithoutFloodingTheLog() throws {
+        let suiteName = "RemoteButtonsTests.reportIgnoreFold.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settings = AppSettings(defaults: defaults)
+        settings.customMappingEnabled = true
+        let profileID = try #require(settings.selectedRemoteProfileID)
+
+        var performedActions = 0
+        let monitor = HIDRemoteMonitor(
+            settings: settings,
+            profileID: profileID,
+            ownsEventSuppressor: false,
+            runtimePermissions: { true },
+            actionPerformer: { _, _, _ in
+                performedActions += 1
+                return true
+            }
+        )
+        monitor.connectSimulatedDevice(fingerprint: "a6-report-fold", profileID: profileID)
+
+        let sink = HIDLogLineSink()
+        let token = AppLogger.shared.addWriteObserver { sink.record($0) }
+        defer { AppLogger.shared.removeWriteObserver(token) }
+
+        // A usage no remote button claims. Nothing else writes this usage, so the fold key
+        // belongs to this test alone even though suites run in parallel.
+        let unclaimedUsage: UInt16 = 0xBEEF
+        #expect(RemoteButton.usageMap[unclaimedUsage] == nil)
+        let press = Data([unclaimedUsage.lowByte, unclaimedUsage.highByte])
+        let release = Data([0, 0])
+        for _ in 0 ..< 40 {
+            monitor.handleSimulatedReport(reportID: 1, data: press)
+            monitor.handleSimulatedReport(reportID: 1, data: release)
+        }
+        AppLogger.shared.flush()
+
+        let expected = "HID INPUT ignored " +
+            "reason=\(HIDSuppressionReason.usageNotMapped.rawValue) usage=\(unclaimedUsage)"
+        // Named at all, which it was not before.
+        #expect(sink.lines.contains(expected))
+        // But once for forty presses. This branch sits on the per-report path, and a line
+        // per report is exactly what grew the runtime log to 21 MB in 11 days.
+        #expect(sink.lines.filter { $0 == expected }.count == 1)
+        #expect(performedActions == 0)
+        monitor.disconnectSimulatedDevice()
+    }
+}
+
+private extension UInt16 {
+    var lowByte: UInt8 { UInt8(self & 0xFF) }
+    var highByte: UInt8 { UInt8(self >> 8) }
+}
+
+/// Collects the lines `AppLogger.shared` actually writes. Suppressed repeats never reach
+/// observers, which is what lets a test assert fold behaviour instead of assuming it.
+private final class HIDLogLineSink {
+    private let lock = NSLock()
+    private var storage: [String] = []
+
+    func record(_ line: String) {
+        lock.lock()
+        storage.append(line)
+        lock.unlock()
+    }
+
+    func reset() {
+        lock.lock()
+        storage.removeAll()
+        lock.unlock()
+    }
+
+    var lines: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    /// Reason tokens carried by `HID START rejected` lines seen so far.
+    var startRejectionReasons: Set<String> {
+        let prefix = "HID START rejected reason="
+        return Set(lines.compactMap { line in
+            guard line.hasPrefix(prefix) else { return nil }
+            return String(line.dropFirst(prefix.count).prefix { $0 != " " })
+        })
+    }
 }

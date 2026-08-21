@@ -26,16 +26,22 @@ enum LogFold {
 
     /// Message classes allowed to fold, as literal prefixes.
     ///
-    /// All three are the bluetooth reconnect retry loop, the single mechanism behind
+    /// The first three are the bluetooth reconnect retry loop, the single mechanism behind
     /// 43557 of the 113242 field lines (38.5%): a scan starts, a connect is attempted,
     /// it times out, repeat. Every attempt renders byte-identical text, so a count is a
-    /// complete substitute for the individual lines. Nothing else is listed: the other
+    /// complete substitute for the individual lines.
+    ///
+    /// `HID INPUT ignored reason=` is the same shape for a different mechanism: it sits on
+    /// the per-HID-report path, where a chattering remote can produce hundreds of reports a
+    /// second, and it renders a fixed reason token plus at most a button name — no
+    /// `state={…}` dump whose contents would be lost. Nothing else is listed: the other
     /// high-volume classes all carry a per-line `state={…}` or `target={…}` dump whose
     /// contents are exactly what triage needs.
     static let foldableMessagePrefixes = [
         "BLE CONNECTING ",
         "BLE CONNECT TIMEOUT",
         "BLE SCANNING",
+        "HID INPUT ignored reason=",
     ]
 
     /// Fold key for `message`, or `nil` when the message must be written verbatim.

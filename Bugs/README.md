@@ -1,6 +1,7 @@
 # Bug 记录
 
 - [遥控器不在范围内时每小时 317 次蓝牙重连](./2026-08-21-bluetooth-reconnect-storm-when-remote-absent.md)
+- [按键没反应时日志说不出原因](./2026-08-21-hid-silent-returns-hide-why-a-button-did-nothing.md)
 - [Apple Watch BLE 语音已启动但没有有效电平](./2026-08-18-watch-ble-audio-no-signal.md)
 - [MiRemoteV 2ch 音频通道偶发失效，重新选择后恢复](./2026-08-17-miremotev-audio-channel-stale-until-reselected.md)
 - [移动设备已连接后仍显示正在等待](./2026-08-15-mobile-connection-still-shows-waiting/DEBUG.md)

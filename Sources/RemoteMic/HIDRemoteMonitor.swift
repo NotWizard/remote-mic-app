@@ -145,6 +145,7 @@ final class HIDRemoteMonitor {
         self.allowedLocationIDs = allowedLocationIDs
         guard settings.customMappingEnabled else {
             updateStatus(LocalizedMessage("button_mapping.status.system_managed"))
+            logStartRejected(.mappingDisabled)
             return
         }
         let inputGranted = Self.isInputMonitoringGranted
@@ -158,17 +159,22 @@ final class HIDRemoteMonitor {
             accessibilityGranted: accessibilityGranted,
             powerKeySuppressed: powerKeySuppressed
         ) else {
+            let reason: HIDSuppressionReason
             if !inputGranted {
                 updateStatus(LocalizedMessage("button_mapping.permission.input_monitoring_required"))
+                reason = .inputMonitoringDenied
             } else if !accessibilityGranted {
                 updateStatus(LocalizedMessage("button_mapping.permission.accessibility_required"))
+                reason = .accessibilityDenied
             } else {
                 updateStatus(LocalizedMessage("button_mapping.error.power_suppression_failed"))
-                AppLogger.shared.write(
-                    "HID START rejected mapping_enabled=\(settings.customMappingEnabled) " +
-                        "power_suppressed=\(powerKeySuppressed)"
-                )
+                reason = .powerKeyNotSuppressed
             }
+            logStartRejected(
+                reason,
+                detail: "mapping_enabled=\(settings.customMappingEnabled) " +
+                    "power_suppressed=\(powerKeySuppressed)"
+            )
             return
         }
 
@@ -201,6 +207,7 @@ final class HIDRemoteMonitor {
             )
             eventSuppressor.stop()
             updateStatus(LocalizedMessage("button_mapping.error.remote_read_failed", arguments: [String(result)]))
+            logStartRejected(.managerOpenFailed, detail: "result=\(result)")
             return
         }
         self.manager = manager
@@ -233,23 +240,36 @@ final class HIDRemoteMonitor {
     fileprivate func deviceDidMatch(result: IOReturn, device: IOHIDDevice) {
         guard result == kIOReturnSuccess else {
             updateStatus(LocalizedMessage("button_mapping.error.device_open_failed"))
+            logDeviceRejected(.matchCallbackFailed, detail: "result=\(result)")
             return
         }
         guard Self.isLocationAllowed(
             locationID: Self.locationID(for: device),
             allowedLocationIDs: allowedLocationIDs
         ) else {
-            AppLogger.shared.write("HID DEVICE rejected unsafe_location")
+            logDeviceRejected(.unsafeLocation)
             return
         }
-        guard let fingerprint = Self.fingerprint(for: device) else { return }
+        guard let fingerprint = Self.fingerprint(for: device) else {
+            logDeviceRejected(.fingerprintUnavailable)
+            return
+        }
         if profileID == nil, targetFingerprint == nil, deviceFingerprint == nil {
+            logDeviceRejected(.awaitingReportRouting)
             return
         }
-        guard activeDevice == nil,
-              targetFingerprint == nil || targetFingerprint == fingerprint,
-              !excludedFingerprints().contains(fingerprint)
-        else { return }
+        if activeDevice != nil {
+            logDeviceRejected(.anotherDeviceActive)
+            return
+        }
+        if let targetFingerprint, targetFingerprint != fingerprint {
+            logDeviceRejected(.fingerprintNotTarget)
+            return
+        }
+        if excludedFingerprints().contains(fingerprint) {
+            logDeviceRejected(.fingerprintExcluded)
+            return
+        }
         _ = activateDevice(device, fingerprint: fingerprint, allowManagerFallback: false)
     }
 
@@ -313,17 +333,30 @@ final class HIDRemoteMonitor {
     }
 
     fileprivate func handleReport(from device: IOHIDDevice, reportID: UInt32, data: Data) {
-        guard manager != nil, settings.customMappingEnabled else { return }
+        guard manager != nil else {
+            logInputIgnored(.monitorNotRunning)
+            return
+        }
+        guard settings.customMappingEnabled else {
+            logInputIgnored(.mappingDisabled)
+            return
+        }
         guard Self.isLocationAllowed(
             locationID: Self.locationID(for: device),
             allowedLocationIDs: allowedLocationIDs
-        ) else { return }
+        ) else {
+            logInputIgnored(.reportLocationNotAllowed)
+            return
+        }
         guard let fingerprint = Self.resolvedFingerprintForReport(
             reportingFingerprint: Self.fingerprint(for: device),
             activeFingerprint: deviceFingerprint,
             targetFingerprint: targetFingerprint,
             excludedFingerprints: excludedFingerprints()
-        ) else { return }
+        ) else {
+            logInputIgnored(.reportFingerprintNotRouted)
+            return
+        }
         if deviceFingerprint == nil {
             guard activateDevice(
                 device,
@@ -336,6 +369,7 @@ final class HIDRemoteMonitor {
             return
         }
         guard let usages = RemoteHIDReportParser.usages(reportID: reportID, data: data) else {
+            logInputIgnored(.reportNotParsed)
             return
         }
         process(usages: usages)
@@ -373,7 +407,10 @@ final class HIDRemoteMonitor {
         onActiveButtons?(profileID, RemoteButton.buttons(for: usages))
 
         for usage in pressed.sorted() {
-            guard let button = RemoteButton.usageMap[usage] else { continue }
+            guard let button = RemoteButton.usageMap[usage] else {
+                logInputIgnored(.usageNotMapped, detail: "usage=\(usage)")
+                continue
+            }
             let preflightProfileID = profileID
             let preflightRecognizesDoubleClick = settings.configuredAction(
                 for: button,
@@ -415,6 +452,10 @@ final class HIDRemoteMonitor {
                 if !activeDeviceIsSeized, usesNativePassthrough {
                     eventSuppressor.arm(button: button, edge: .down)
                 }
+                logInputIgnored(
+                    shouldPerformAction ? .profileUnresolved : .routingDeclined,
+                    detail: "button=\(button.rawValue)"
+                )
                 continue
             }
 
@@ -448,7 +489,10 @@ final class HIDRemoteMonitor {
                     button: button,
                     action: action,
                     frontmostBundleIdentifier: frontmostBundleIdentifier()
-                ) else { continue }
+                ) else {
+                    logInputIgnored(.duplicatePressDebounced, detail: "button=\(button.rawValue)")
+                    continue
+                }
                 guard performConfiguredAction(for: button, trigger: .singleClick) else { return }
                 startRepeatIfNeeded(
                     usage: usage,
@@ -668,6 +712,11 @@ final class HIDRemoteMonitor {
         guard actionPerformer(button, trigger, configured) else {
             stop()
             updateStatus(LocalizedMessage("button_mapping.permission.accessibility_expired"))
+            AppLogger.shared.write(
+                "HID ACTION failed reason=\(HIDSuppressionReason.actionInjectionRejected.rawValue) " +
+                    "button=\(button.rawValue) trigger=\(trigger.rawValue) " +
+                    "action=\(configured.action.rawValue)"
+            )
             return false
         }
         AppLogger.shared.write(
@@ -753,6 +802,32 @@ final class HIDRemoteMonitor {
         guard let allowedLocationIDs else { return true }
         guard let locationID else { return false }
         return allowedLocationIDs.contains(locationID)
+    }
+
+    /// Cold path: at most one line per `start()` call.
+    private func logStartRejected(_ reason: HIDSuppressionReason, detail: String? = nil) {
+        var message = "HID START rejected reason=\(reason.rawValue)"
+        if let detail { message += " \(detail)" }
+        AppLogger.shared.write(message)
+    }
+
+    /// Cold path: at most one line per device match callback.
+    private func logDeviceRejected(_ reason: HIDSuppressionReason, detail: String? = nil) {
+        var message = "HID DEVICE rejected reason=\(reason.rawValue)"
+        if let detail { message += " \(detail)" }
+        AppLogger.shared.write(message)
+    }
+
+    /// Hot path: reached per HID report and per press edge, where a chattering remote can
+    /// produce hundreds of reports a second. The message is its own fold key, which is
+    /// exactly what `LogFold` requires to be safe — two lines sharing a key are
+    /// byte-identical, so a suppressed repeat can never hide a field the retained line does
+    /// not already show. `detail` therefore stays a small bounded discriminator (a button
+    /// name or usage), never a state dump, so each variant folds independently.
+    private func logInputIgnored(_ reason: HIDSuppressionReason, detail: String? = nil) {
+        var message = "HID INPUT ignored reason=\(reason.rawValue)"
+        if let detail { message += " \(detail)" }
+        AppLogger.shared.write(message, foldKey: message)
     }
 
     private func updateStatus(_ value: LocalizedMessage) {

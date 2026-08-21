@@ -757,3 +757,47 @@ enum HIDPermissionRequest: Equatable {
     case inputMonitoring
     case accessibility
 }
+
+/// Why `HIDRemoteMonitor` abandoned a step that would otherwise have ended in a
+/// user-visible action.
+///
+/// A field report of "my custom button mapping stopped working after a reconnect" was
+/// diagnosed against a log whose decisive line read only `HID START rejected`: a disabled
+/// mapping and an unapplied power-key suppression rendered byte-identical text, so the
+/// cause had to be excluded by reading `UserDefaults` off the user's machine instead. The
+/// set is closed and each token is fixed so that no two branches can drift into the same
+/// text, and so `reason=` stays greppable across log files.
+///
+/// Tokens are the log contract. Renaming one invalidates existing field logs.
+enum HIDSuppressionReason: String, CaseIterable {
+    // `start()` — the monitor never came up, so no report can ever arrive.
+    case mappingDisabled = "mapping_disabled"
+    case inputMonitoringDenied = "input_monitoring_denied"
+    case accessibilityDenied = "accessibility_denied"
+    case powerKeyNotSuppressed = "power_key_not_suppressed"
+    case managerOpenFailed = "manager_open_failed"
+
+    // `deviceDidMatch()` — a matching remote appeared but was not adopted.
+    case matchCallbackFailed = "match_callback_failed"
+    case unsafeLocation = "unsafe_location"
+    case fingerprintUnavailable = "fingerprint_unavailable"
+    case awaitingReportRouting = "awaiting_report_routing"
+    case anotherDeviceActive = "another_device_active"
+    case fingerprintNotTarget = "fingerprint_not_target"
+    case fingerprintExcluded = "fingerprint_excluded"
+
+    // `handleReport()` — a report arrived and was dropped before parsing.
+    case monitorNotRunning = "monitor_not_running"
+    case reportLocationNotAllowed = "report_location_not_allowed"
+    case reportFingerprintNotRouted = "report_fingerprint_not_routed"
+    case reportNotParsed = "report_not_parsed"
+
+    // `process()` — a press was recognised but produced no action.
+    case usageNotMapped = "usage_not_mapped"
+    case profileUnresolved = "profile_unresolved"
+    case routingDeclined = "routing_declined"
+    case duplicatePressDebounced = "duplicate_press_debounced"
+
+    // `performConfiguredAction()` — the action was dispatched and refused.
+    case actionInjectionRejected = "action_injection_rejected"
+}
