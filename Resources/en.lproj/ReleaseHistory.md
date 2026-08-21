@@ -1,5 +1,13 @@
 # Version History
 
+## 1.8.25-fork.3 (this fork)
+
+- Installation is now two separate files. `Remote-Mic-<version>.dmg` is drag-install: open it and drag Remote Mic into Applications. The audio driver moved to its own `MiRemoteV2ch-Driver-<version>.dmg`, which contains both an installer and an uninstaller.
+- Fixed the previous release's installer deleting your installed copy of Remote Mic and then failing. The package bundled the app, so macOS could redirect the install to another path it had on record and remove the copy you were running. The app no longer goes through a package at all, so this cannot happen again.
+- Most people do not need the audio driver. Ordinary button mapping and using the voice key as a pure trigger both work without it. Install it only to route the remote's built-in microphone into other apps when you have no loopback device such as BlackHole.
+- The driver installer no longer installs, modifies, or launches Remote Mic; it only manages the driver.
+- Automated tests for this change pass. Verification of real installs and uninstalls on hardware is not complete.
+
 ## 1.8.25-fork.2 (this fork)
 
 - Fixed custom button mappings falling back to system default behavior after the remote reconnected from a long sleep. Waking the remote overnight could find the system not ready with the remote's button interface yet; Remote Mic gave up after a single failure and never retried that day, so recovery required restarting the app or toggling the mapping switch. It now retries until the interface is ready and the mapping recovers on its own.

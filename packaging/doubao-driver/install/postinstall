@@ -1,6 +1,12 @@
 #!/bin/zsh
 set -euo pipefail
 
+# This installer only manages the MiRemoteV 2ch audio driver. Remote Mic.app is
+# distributed as a drag-install DMG and is deliberately absent from this payload:
+# shipping the app here let macOS bundle relocation redirect the install to
+# whatever path Launch Services had registered for com.hd838a.RemoteMic, which
+# deleted the user's installed app and then failed in this script.
+
 TARGET_VOLUME="${3:-/}"
 SCRIPT_DIR="${0:A:h}"
 RELEASE_CONFIG="$SCRIPT_DIR/release-variant.plist"
@@ -10,20 +16,6 @@ BINARY="$DESTINATION/Contents/MacOS/MiRemoteV2ch"
 STAGED_DRIVER="${TARGET_VOLUME%/}/Library/Application Support/RemoteMic/Installer/MiRemoteV2ch.driver"
 STAGED_PLIST="$STAGED_DRIVER/Contents/Info.plist"
 STAGED_BINARY="$STAGED_DRIVER/Contents/MacOS/MiRemoteV2ch"
-APP_DESTINATION="${TARGET_VOLUME%/}/Applications/Remote Mic.app"
-APP_PLIST="$APP_DESTINATION/Contents/Info.plist"
-APP_BINARY="$APP_DESTINATION/Contents/MacOS/RemoteMic"
-SPARKLE_VERSION_DIR="$APP_DESTINATION/Contents/Frameworks/Sparkle.framework/Versions/B"
-APP_EXECUTABLES=(
-  "$APP_BINARY"
-  "$SPARKLE_VERSION_DIR/Sparkle"
-  "$SPARKLE_VERSION_DIR/Autoupdate"
-  "$SPARKLE_VERSION_DIR/Updater.app/Contents/MacOS/Updater"
-  "$SPARKLE_VERSION_DIR/XPCServices/Installer.xpc/Contents/MacOS/Installer"
-  "$SPARKLE_VERSION_DIR/XPCServices/Downloader.xpc/Contents/MacOS/Downloader"
-)
-LEGACY_APP_DESTINATION="${TARGET_VOLUME%/}/Applications/无线麦.app"
-LEGACY_APP_PLIST="$LEGACY_APP_DESTINATION/Contents/Info.plist"
 
 uses_chinese_locale() {
   local locale="${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}"
@@ -74,17 +66,11 @@ driver_is_healthy_and_current() {
 test -f "$RELEASE_CONFIG"
 EXPECTED_ARCHITECTURE="$(/usr/bin/plutil -extract ExpectedArchitecture raw -o - "$RELEASE_CONFIG")"
 MINIMUM_SYSTEM_MAJOR="$(/usr/bin/plutil -extract MinimumSystemMajor raw -o - "$RELEASE_CONFIG")"
-MINIMUM_SYSTEM_VERSION="$(/usr/bin/plutil -extract MinimumSystemVersion raw -o - "$RELEASE_CONFIG")"
 
 test -d "$STAGED_DRIVER"
 test -f "$STAGED_PLIST"
 test -x "$STAGED_BINARY"
-test -d "$APP_DESTINATION"
-test -f "$APP_PLIST"
-test -x "$APP_BINARY"
-test "$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$APP_PLIST")" = "com.hd838a.RemoteMic"
-test "$(/usr/bin/plutil -extract LSMinimumSystemVersion raw -o - "$APP_PLIST")" = \
-  "$MINIMUM_SYSTEM_VERSION"
+
 CURRENT_ARCHITECTURE="$(hardware_architecture)"
 if [[ "$CURRENT_ARCHITECTURE" != "$EXPECTED_ARCHITECTURE" ]]; then
   if [[ "$EXPECTED_ARCHITECTURE" == "arm64" ]]; then
@@ -121,55 +107,11 @@ else
     "MiRemoteV 2ch was installed or updated."
 fi
 /bin/rm -rf -- "${STAGED_DRIVER:h}"
-/usr/sbin/chown -R root:wheel "$APP_DESTINATION"
-/usr/bin/find "$APP_DESTINATION" -type d -exec /bin/chmod 755 {} \;
-/usr/bin/find "$APP_DESTINATION" -type f -exec /bin/chmod 644 {} \;
-for app_executable in "${APP_EXECUTABLES[@]}"; do
-  test -f "$app_executable"
-  /bin/chmod 755 "$app_executable"
-  test -x "$app_executable"
-done
-/usr/bin/codesign --verify --deep --strict "$APP_DESTINATION"
 
 if [[ "$DRIVER_CHANGED" -eq 1 ]]; then
   /usr/bin/killall coreaudiod
 fi
 
-if [[ -e "$LEGACY_APP_DESTINATION" || -L "$LEGACY_APP_DESTINATION" ]]; then
-  if [[ -f "$LEGACY_APP_PLIST" ]] && \
-     [[ "$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$LEGACY_APP_PLIST" 2>/dev/null || true)" == "com.hd838a.RemoteMic" ]]; then
-    /usr/bin/pkill -x RemoteMic 2>/dev/null || true
-    /bin/rm -rf -- "$LEGACY_APP_DESTINATION"
-    installer_message \
-      "已将旧版“无线麦.app”迁移到“Remote Mic.app”。" \
-      "Migrated the legacy app to Remote Mic.app."
-  else
-    installer_message \
-      "旧中文应用路径不属于 Remote Mic，安装器已保留它不作处理。" \
-      "The legacy Chinese app path does not belong to Remote Mic and was left untouched."
-  fi
-fi
-
-CONSOLE_USER="$(/usr/bin/stat -f '%Su' /dev/console)"
-if [[ "$TARGET_VOLUME" != "/" ]]; then
-  installer_message \
-    "已完成安装；请从目标磁盘的“应用程序”目录手动打开 Remote Mic。" \
-    "Installation is complete. Open Remote Mic from Applications on the target disk."
-elif [[ "$CONSOLE_USER" != "root" && "$CONSOLE_USER" != "loginwindow" ]]; then
-  CONSOLE_UID="$(/usr/bin/id -u "$CONSOLE_USER")"
-  /usr/bin/pkill -U "$CONSOLE_UID" -x RemoteMic 2>/dev/null || true
-  if /bin/launchctl asuser "$CONSOLE_UID" \
-    /usr/bin/sudo -u "$CONSOLE_USER" /usr/bin/open "$APP_DESTINATION"; then
-    installer_message \
-      "已安装并启动 Remote Mic；请在状态栏打开设置并选择 MiRemoteV 2ch。" \
-      "Remote Mic is installed and running. Open its menu bar settings and select MiRemoteV 2ch."
-  else
-    installer_message \
-      "已完成安装，但未能自动启动应用；请从“应用程序”手动打开 Remote Mic。" \
-      "Installation is complete, but the app could not be launched automatically. Open Remote Mic from Applications."
-  fi
-else
-  installer_message \
-    "已完成安装；登录桌面后请从“应用程序”打开 Remote Mic。" \
-    "Installation is complete. After signing in, open Remote Mic from Applications."
-fi
+installer_message \
+  "驱动安装完成。请在 Remote Mic 的“连接与语音”页刷新音频设备并选择 MiRemoteV 2ch。Remote Mic.app 由单独的 DMG 拖拽安装，本安装器不会安装或改动它。" \
+  "Driver installation is complete. In Remote Mic, open Connection & Voice, refresh audio devices, and select MiRemoteV 2ch. Remote Mic.app is drag-installed from its own DMG; this installer never installs or modifies it."

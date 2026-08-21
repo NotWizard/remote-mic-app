@@ -6,7 +6,7 @@ MiRemoteV 2ch is Remote Mic's standalone stereo loopback device. It allows Douba
 
 You do not need Xcode, Git, or Terminal.
 
-1. Double-click Install Remote Mic.pkg at the root of the DMG.
+1. Open MiRemoteV2ch-Driver-<version>.dmg and double-click Install Remote Mic.pkg inside it.
 2. Enter an administrator password when macOS Installer asks.
 3. The installer adds Remote Mic and MiRemoteV 2ch, restarts Core Audio, and launches Remote Mic.
 4. Left-click the menu bar icon, then select **Refresh Audio Devices** in **Connection & Voice**.

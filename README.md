@@ -85,27 +85,38 @@
 
 ## 安装
 
-本分支在 [Releases](https://github.com/NotWizard/remote-mic-app/releases) 提供 Apple Silicon 的 `Remote-Mic-<版本>.dmg`（ad-hoc 签名，未公证）。
+本分支在 [Releases](https://github.com/NotWizard/remote-mic-app/releases) 提供两个独立制品（Apple Silicon，ad-hoc 签名，未公证）：
 
-打开 DMG 后双击唯一的 `Install Remote Mic.pkg`。安装器会安装 Remote Mic，并检查现有 `MiRemoteV 2ch`：健康且兼容时原样保留，缺失或不可用时才安装或更新。
+| 制品 | 内容 | 何时需要 |
+| --- | --- | --- |
+| `Remote-Mic-<版本>.dmg` | `Remote Mic.app` + “应用程序”快捷方式 | 每次安装或升级 |
+| `MiRemoteV2ch-Driver-<版本>.dmg` | 驱动的安装与卸载 pkg | 仅在需要用**遥控器自带麦克风**收音时 |
 
-**首次打开必须右键点击 App 图标并选择“打开”**，或先执行 `xattr -dr com.apple.quarantine "/Applications/Remote Mic.app"`。本分支没有 Apple Developer ID 证书，只能 ad-hoc 签名，Gatekeeper 会拦截直接双击。
+**App：拖拽安装。** 打开 DMG，把 `Remote Mic.app` 拖到“应用程序”即可。**首次打开必须右键点击图标并选择“打开”**，或先执行 `xattr -dr com.apple.quarantine "/Applications/Remote Mic.app"`。本分支没有 Apple Developer ID 证书，只能 ad-hoc 签名，Gatekeeper 会拦截直接双击。
+
+**驱动：多数人不需要。** 普通按键映射和把语音键当纯触发器都不需要它。只有要把遥控器自带麦克风的声音送进其他 App、且你没有 BlackHole 2ch 等回环设备时才装。已装 BlackHole 的直接选它即可。
 
 需要经过 Apple 签名和公证的安装包时，请使用[上游官方 Releases](https://github.com/HD838A/remote-mic-app/releases)，但其中不含本分支的改动。
 
+### 为什么拆成两个
+
+上游把 App 和驱动放在同一个 pkg 里。pkg 携带 App payload 时，macOS 的 bundle relocation 会把安装目标改写到 Launch Services 记录的任意旧路径，**删除用户正在使用的 App**，随后脚本因目标路径不存在而失败。详见 [`Bugs/2026-08-21-installer-bundle-relocation-deleted-installed-app.md`](Bugs/2026-08-21-installer-bundle-relocation-deleted-installed-app.md)。
+
+拆开后，日常高频路径（升级 App）是纯拖拽，没有 BOM、没有重定位、没有安装脚本；驱动包的 payload 里不含 App，从根上不可能再删掉你的 App。
+
 ### 自动更新已关闭
 
-本分支构建把 Sparkle 更新源指向本仓库，并关闭了自动检查。原因是构建产物仍沿用上游的 Bundle ID `com.hd838a.RemoteMic`：若继续指向上游 appcast，Sparkle 会把上游的签名版本当作新版本，**静默覆盖本分支构建**，4 项改动随之全部丢失。
+本分支构建把 Sparkle 更新源指向本仓库，并关闭了自动检查。原因是构建产物仍沿用上游的 Bundle ID `com.hd838a.RemoteMic`：若继续指向上游 appcast，Sparkle 会把上游的签名版本当作新版本，**静默覆盖本分支构建**，本分支改动随之全部丢失。
 
 代价是升级需要手动下载新的 DMG。本分支不发布 appcast 资产，因此手动“检查更新…”也不会找到版本。
 
 ### 从源码构建
 
 ```zsh
-swift test               # 244 项单元测试
-./scripts/test.sh        # 42 项项目自检
-./scripts/build-app.sh   # 产出 dist/Remote Mic.app
-./scripts/build-dmg.sh   # 产出 dist/Remote-Mic-<版本>.dmg 与 .sha256
+swift test                      # 247 项单元测试
+./scripts/test.sh               # 42 项项目自检
+./scripts/build-dmg.sh          # 产出 dist/Remote-Mic-<版本>.dmg（拖拽式）
+./scripts/build-driver-dmg.sh   # 产出 dist/MiRemoteV2ch-Driver-<版本>.dmg
 ```
 
 ## 首次使用

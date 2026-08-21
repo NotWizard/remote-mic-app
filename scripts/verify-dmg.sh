@@ -11,7 +11,8 @@ DMG="${1:-$OUTPUT_DIR/Remote-Mic-$VERSION$RELEASE_ASSET_SUFFIX.dmg}"
 CHECKSUM="$DMG.sha256"
 VERIFY_ROOT="$(mktemp -d /private/tmp/remote-mic-dmg-verify.XXXXXX)"
 MOUNT_POINT="$VERIFY_ROOT/mount"
-INSTALL_PACKAGE="$MOUNT_POINT/$RELEASE_INSTALL_PACKAGE_NAME"
+STAGED_APP="$MOUNT_POINT/$DISPLAY_NAME.app"
+APPLICATIONS_LINK="$MOUNT_POINT/Applications"
 EXPECTED_DEVELOPER_TEAM_ID="${EXPECTED_DEVELOPER_TEAM_ID:-}"
 REQUIRE_DEVELOPER_ID_SIGNING="${REQUIRE_DEVELOPER_ID_SIGNING:-0}"
 REQUIRE_NOTARIZATION="${REQUIRE_NOTARIZATION:-0}"
@@ -67,13 +68,21 @@ hdiutil verify "$DMG"
 hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT_POINT" "$DMG" -quiet
 ATTACHED=1
 
-EXPECTED_ROOT_ENTRIES="$RELEASE_INSTALL_PACKAGE_NAME"
+EXPECTED_ROOT_ENTRIES="$(printf '%s\nApplications' "$DISPLAY_NAME.app" | LC_ALL=C sort)"
 ACTUAL_ROOT_ENTRIES="$(find "$MOUNT_POINT" -mindepth 1 -maxdepth 1 \
   -exec basename {} \; | LC_ALL=C sort)"
 
 test "$ACTUAL_ROOT_ENTRIES" = "$EXPECTED_ROOT_ENTRIES"
-test -f "$INSTALL_PACKAGE"
-"$ROOT/scripts/verify-doubao-driver-pkg.sh" "$INSTALL_PACKAGE" install
+test -L "$APPLICATIONS_LINK"
+test "$(readlink "$APPLICATIONS_LINK")" = "/Applications"
+test -d "$STAGED_APP"
+test -x "$STAGED_APP/Contents/MacOS/RemoteMic"
+codesign --verify --deep --strict "$STAGED_APP"
+test "$(/usr/bin/lipo -archs "$STAGED_APP/Contents/MacOS/RemoteMic")" = "$RELEASE_ARCH"
+test "$(plutil -extract CFBundleIdentifier raw -o - "$STAGED_APP/Contents/Info.plist")" = "com.hd838a.RemoteMic"
+test "$(plutil -extract CFBundleShortVersionString raw -o - "$STAGED_APP/Contents/Info.plist")" = "$VERSION"
+test "$(plutil -extract CFBundleVersion raw -o - "$STAGED_APP/Contents/Info.plist")" = "$BUILD"
+test "$(plutil -extract SUFeedURL raw -o - "$STAGED_APP/Contents/Info.plist")" = "$RELEASE_FEED_URL"
 
 print "DMG VERIFY PASS: $DMG"
 print "VERSION: $VERSION ($BUILD)"

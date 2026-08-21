@@ -85,27 +85,38 @@ Not done: none of the four changes above have been **verified end-to-end on real
 
 ## Installation
 
-This fork publishes an Apple Silicon `Remote-Mic-<version>.dmg` on [Releases](https://github.com/NotWizard/remote-mic-app/releases), ad-hoc signed and not notarized.
+This fork publishes two separate Apple Silicon artifacts on [Releases](https://github.com/NotWizard/remote-mic-app/releases), both ad-hoc signed and not notarized:
 
-Open the DMG and double-click the single `Install Remote Mic.pkg`. The installer installs Remote Mic and checks the existing `MiRemoteV 2ch`: a healthy, compatible driver is kept as is; a missing or unusable one is installed or updated.
+| Artifact | Contents | When you need it |
+| --- | --- | --- |
+| `Remote-Mic-<version>.dmg` | `Remote Mic.app` + an Applications shortcut | Every install and upgrade |
+| `MiRemoteV2ch-Driver-<version>.dmg` | Driver install and uninstall packages | Only to capture audio from the **remote's built-in microphone** |
 
-**The first launch requires right-click → Open** on the app icon, or run `xattr -dr com.apple.quarantine "/Applications/Remote Mic.app"` first. This fork has no Apple Developer ID certificate and can only sign ad-hoc, which Gatekeeper blocks on a plain double-click.
+**App: drag-install.** Open the DMG and drag `Remote Mic.app` into Applications. **The first launch requires right-click → Open** on the app icon, or run `xattr -dr com.apple.quarantine "/Applications/Remote Mic.app"` first. This fork has no Apple Developer ID certificate and can only sign ad-hoc, which Gatekeeper blocks on a plain double-click.
+
+**Driver: most people do not need it.** Ordinary button mapping and using the voice key as a pure trigger both work without it. Install it only if you want the remote's built-in microphone routed into other apps and you have no loopback device such as BlackHole 2ch. If BlackHole is already installed, just select that instead.
 
 If you need an Apple-signed and notarized package, use [upstream's official Releases](https://github.com/HD838A/remote-mic-app/releases) — they do not contain this fork's changes.
 
+### Why these are split
+
+Upstream ships the app and the driver in one package. When a pkg carries app payload, macOS bundle relocation can redirect the install to whatever path Launch Services has registered for that bundle identifier, **deleting the app the user is running**, after which the install scripts fail because the expected path no longer exists. See [`Bugs/2026-08-21-installer-bundle-relocation-deleted-installed-app.md`](Bugs/2026-08-21-installer-bundle-relocation-deleted-installed-app.md).
+
+After the split the frequent path — upgrading the app — is a plain drag with no BOM, no relocation, and no install scripts. The driver package carries no app payload, so it can never delete your app.
+
 ### Automatic updates are disabled
 
-Fork builds point Sparkle at this repository and disable automatic checks. Build output still carries upstream's bundle identifier `com.hd838a.RemoteMic`, so leaving the feed on upstream's appcast would let Sparkle treat upstream's signed release as an update and **silently overwrite the fork build**, discarding all four changes.
+Fork builds point Sparkle at this repository and disable automatic checks. Build output still carries upstream's bundle identifier `com.hd838a.RemoteMic`, so leaving the feed on upstream's appcast would let Sparkle treat upstream's signed release as an update and **silently overwrite the fork build**, discarding every fork change.
 
 The trade-off is manual upgrades: download the newer DMG yourself. This fork publishes no appcast asset, so even a manual "Check for Updates…" finds nothing.
 
 ### Build from source
 
 ```zsh
-swift test               # 244 unit tests
-./scripts/test.sh        # 42 project self-checks
-./scripts/build-app.sh   # produces dist/Remote Mic.app
-./scripts/build-dmg.sh   # produces dist/Remote-Mic-<version>.dmg and .sha256
+swift test                      # 247 unit tests
+./scripts/test.sh               # 42 project self-checks
+./scripts/build-dmg.sh          # produces the drag-install dist/Remote-Mic-<version>.dmg
+./scripts/build-driver-dmg.sh   # produces dist/MiRemoteV2ch-Driver-<version>.dmg
 ```
 
 ## First use

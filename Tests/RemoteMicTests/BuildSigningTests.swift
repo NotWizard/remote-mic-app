@@ -465,11 +465,12 @@ struct BuildSigningTests {
         #expect(!preinstallSource.contains("/usr/bin/uname -m"))
         #expect(preinstallSource.contains("Download the Intel version"))
         #expect(preinstallSource.contains("Download the Apple Silicon version"))
-        #expect(!preinstallSource.contains("/bin/rm -rf -- \"$APP_DESTINATION\""))
-        #expect(preinstallSource.contains("will be updated atomically"))
-        #expect(packageVerifierSource.contains("preinstall must not delete an existing Remote Mic.app"))
-        #expect(preinstallSource.contains("INSTALLED_BUILD="))
-        #expect(preinstallSource.contains("The existing app was left intact. Use a newer installer."))
+        // The driver installer no longer knows about the app at all, which is stronger
+        // than the previous "must not delete the app" guard.
+        #expect(!preinstallSource.contains("APP_DESTINATION"))
+        #expect(packageVerifierSource.contains(
+            "driver package payload must not contain any /Applications path"
+        ))
         #expect(packageVerifierSource.contains("PackageBuild raw"))
         #expect(packageVerifierSource.contains(
             "package scripts must not require Xcode or Command Line Tools"
@@ -497,7 +498,7 @@ struct BuildSigningTests {
         #expect(process.terminationStatus == 0)
     }
 
-    @Test func ordinaryDmgHasOneInstallerAndKeepsHealthyDriver() throws {
+    @Test func appDmgIsDragInstallAndDriverPackageNeverCarriesTheApp() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -506,9 +507,19 @@ struct BuildSigningTests {
             contentsOf: root.appendingPathComponent("scripts/build-dmg.sh"),
             encoding: .utf8
         )
+        let driverDmgSource = try String(
+            contentsOf: root.appendingPathComponent("scripts/build-driver-dmg.sh"),
+            encoding: .utf8
+        )
         let postinstallSource = try String(
             contentsOf: root.appendingPathComponent(
                 "packaging/doubao-driver/install/postinstall"
+            ),
+            encoding: .utf8
+        )
+        let preinstallSource = try String(
+            contentsOf: root.appendingPathComponent(
+                "packaging/doubao-driver/install/preinstall"
             ),
             encoding: .utf8
         )
@@ -516,12 +527,33 @@ struct BuildSigningTests {
             contentsOf: root.appendingPathComponent("scripts/verify-dmg.sh"),
             encoding: .utf8
         )
+        let packageVerifierSource = try String(
+            contentsOf: root.appendingPathComponent("scripts/verify-doubao-driver-pkg.sh"),
+            encoding: .utf8
+        )
 
-        #expect(dmgSource.contains("$STAGING/$INSTALL_PACKAGE"))
-        #expect(!dmgSource.contains("$STAGING/$DISPLAY_NAME.app"))
+        // The app ships drag-install. A component package carrying app payload is what
+        // let macOS bundle relocation redirect the install and delete the installed app.
+        #expect(dmgSource.contains("$STAGING/$DISPLAY_NAME.app"))
+        #expect(dmgSource.contains("ln -s /Applications"))
+        #expect(!dmgSource.contains("$STAGING/$INSTALL_PACKAGE"))
         #expect(!dmgSource.contains("$STAGING/$UNINSTALL_PACKAGE"))
-        #expect(!dmgSource.contains("ln -s /Applications"))
-        #expect(verifierSource.contains("EXPECTED_ROOT_ENTRIES=\"$RELEASE_INSTALL_PACKAGE_NAME\""))
+        #expect(verifierSource.contains("readlink \"$APPLICATIONS_LINK\""))
+
+        // The driver DMG carries both packages and nothing from the app.
+        #expect(driverDmgSource.contains("$STAGING/$INSTALL_PACKAGE"))
+        #expect(driverDmgSource.contains("$STAGING/$UNINSTALL_PACKAGE"))
+        #expect(!driverDmgSource.contains("$STAGING/$DISPLAY_NAME.app"))
+
+        #expect(!preinstallSource.contains("APP_DESTINATION"))
+        #expect(!postinstallSource.contains("APP_DESTINATION"))
+        #expect(packageVerifierSource.contains(
+            "driver package payload must not contain any /Applications path"
+        ))
+        #expect(packageVerifierSource.contains(
+            "driver package scripts must not reference Remote Mic.app"
+        ))
+
         #expect(postinstallSource.contains("driver_is_healthy_and_current()"))
         #expect(postinstallSource.contains("/usr/bin/file -b \"$1\""))
         #expect(postinstallSource.contains("CFBundleVersion"))

@@ -69,17 +69,15 @@ mkdir -p "$STAGING"
 
 if [[ "$BUILD_COMPONENTS" == "1" ]]; then
   "$ROOT/scripts/build-app.sh"
-  "$ROOT/scripts/build-doubao-driver.sh"
-  "$ROOT/scripts/build-doubao-driver-pkg.sh"
 else
   "$ROOT/scripts/verify-app.sh" "$APP_DIR"
-  "$ROOT/scripts/verify-doubao-driver.sh" "$OUTPUT_DIR/MiRemoteV2ch.driver"
-  "$ROOT/scripts/verify-doubao-driver-pkg.sh" "$OUTPUT_DIR/$INSTALL_PACKAGE" install
-  "$ROOT/scripts/verify-doubao-driver-pkg.sh" "$OUTPUT_DIR/$UNINSTALL_PACKAGE" uninstall
 fi
 
-ditto --norsrc --noqtn --noacl \
-  "$OUTPUT_DIR/$INSTALL_PACKAGE" "$STAGING/$INSTALL_PACKAGE"
+# Drag-install layout on purpose: no pkg, no BOM, no install scripts. A component
+# package containing the app let macOS bundle relocation redirect the install to
+# whatever path Launch Services had registered and delete the user's app.
+ditto --norsrc --noqtn --noacl "$APP_DIR" "$STAGING/$DISPLAY_NAME.app"
+ln -s /Applications "$STAGING/Applications"
 
 run_release_stage dmg-hdiutil-create "$RELEASE_DMG_BUILD_TIMEOUT_SECONDS" hdiutil create \
   -volname "$DISPLAY_NAME $VERSION $RELEASE_LABEL" \

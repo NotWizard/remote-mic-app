@@ -6,7 +6,7 @@
 - macOS 14 or later
 - Xiaomi Bluetooth Remote 2 Pro
 
-After opening Remote-Mic-<version>.dmg, double-click the only Install Remote Mic.pkg. The installer places Remote Mic.app in Applications and checks the existing MiRemoteV 2ch. A healthy compatible driver is kept in place; a missing or unusable driver is installed or updated. The installer then restarts the system audio service and launches Remote Mic for the current desktop user.
+After opening Remote-Mic-<version>.dmg, drag Remote Mic.app into Applications; the first launch needs right-click then Open. The audio driver ships separately in MiRemoteV2ch-Driver-<version>.dmg, which contains both an install and an uninstall package, and is only needed to route the remote's built-in microphone into other apps. The driver installer checks the existing MiRemoteV 2ch: a healthy compatible driver is kept in place, a missing or unusable driver is installed or updated, and the system audio service is then restarted. It never installs, modifies, or launches Remote Mic.app.
 
 Advanced users who need only the app and already use another loopback device such as BlackHole 2ch can download the app-only ZIP from the same Release.
 

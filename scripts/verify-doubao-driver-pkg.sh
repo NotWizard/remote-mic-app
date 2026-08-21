@@ -122,10 +122,14 @@ case "$MODE" in
     /usr/bin/grep -Fq 'identifier="com.hd838a.RemoteMic.installer"' "$PACKAGE_INFO"
     /usr/bin/grep -Fq '<payload ' "$PACKAGE_INFO"
     /usr/bin/lsbom -s "$COMPONENT_PACKAGE/Bom" > "$PAYLOAD_FILES"
-    /usr/bin/grep -qx './Applications/Remote Mic.app/Contents/Info.plist' "$PAYLOAD_FILES"
-    /usr/bin/grep -qx './Applications/Remote Mic.app/Contents/MacOS/RemoteMic' "$PAYLOAD_FILES"
     /usr/bin/grep -qx './Library/Application Support/RemoteMic/Installer/MiRemoteV2ch.driver/Contents/Info.plist' "$PAYLOAD_FILES"
     /usr/bin/grep -qx './Library/Application Support/RemoteMic/Installer/MiRemoteV2ch.driver/Contents/MacOS/MiRemoteV2ch' "$PAYLOAD_FILES"
+    # The driver installer must never carry the app. App payload here is exactly what
+    # let bundle relocation delete a user's installed Remote Mic.app.
+    if /usr/bin/grep -q './Applications/' "$PAYLOAD_FILES"; then
+      print -u2 "driver package payload must not contain any /Applications path"
+      exit 1
+    fi
     test -x "$SCRIPTS_DIR/preinstall"
     test -x "$SCRIPTS_DIR/postinstall"
     test -f "$SCRIPTS_DIR/release-variant.plist"
@@ -138,34 +142,19 @@ case "$MODE" in
     test "$(/usr/bin/plutil -extract PackageBuild raw -o - \
       "$SCRIPTS_DIR/release-variant.plist")" = "$BUILD"
     /usr/bin/grep -Fqx 'DESTINATION="${TARGET_VOLUME%/}/Library/Audio/Plug-Ins/HAL/MiRemoteV2ch.driver"' "$SCRIPTS_DIR/preinstall"
-    /usr/bin/grep -Fqx 'APP_DESTINATION="${TARGET_VOLUME%/}/Applications/Remote Mic.app"' "$SCRIPTS_DIR/preinstall"
-    if /usr/bin/grep -Fq '/bin/rm -rf -- "$APP_DESTINATION"' "$SCRIPTS_DIR/preinstall"; then
-      print -u2 "preinstall must not delete an existing Remote Mic.app"
+    # Neither script may reference the app path at all in the driver-only installer.
+    if /usr/bin/grep -Fq 'APP_DESTINATION' "$SCRIPTS_DIR/preinstall" "$SCRIPTS_DIR/postinstall"; then
+      print -u2 "driver package scripts must not reference Remote Mic.app"
       exit 1
     fi
-    /usr/bin/grep -Fq 'will be updated atomically' "$SCRIPTS_DIR/preinstall"
-    /usr/bin/grep -Fq 'INSTALLED_BUILD=' "$SCRIPTS_DIR/preinstall"
-    /usr/bin/grep -Fq 'The existing app was left intact. Use a newer installer.' \
-      "$SCRIPTS_DIR/preinstall"
-    /usr/bin/grep -Fq '/bin/rm -rf -- "$LEGACY_APP_DESTINATION"' "$SCRIPTS_DIR/preinstall"
+    if /usr/bin/grep -Fq '/Applications/' "$SCRIPTS_DIR/preinstall" "$SCRIPTS_DIR/postinstall"; then
+      print -u2 "driver package scripts must not touch /Applications"
+      exit 1
+    fi
     /usr/bin/grep -Fq 'driver_is_healthy_and_current()' "$SCRIPTS_DIR/postinstall"
     /usr/bin/grep -Fq '/usr/bin/file -b "$1"' "$SCRIPTS_DIR/postinstall"
     /usr/bin/grep -Fq 'The existing MiRemoteV 2ch is healthy and was kept in place.' "$SCRIPTS_DIR/postinstall"
     /usr/bin/grep -Fq '/usr/bin/codesign --verify --deep --strict "$DESTINATION"' "$SCRIPTS_DIR/postinstall"
-    /usr/bin/grep -Fqx 'APP_DESTINATION="${TARGET_VOLUME%/}/Applications/Remote Mic.app"' "$SCRIPTS_DIR/postinstall"
-    /usr/bin/grep -Fqx 'LEGACY_APP_DESTINATION="${TARGET_VOLUME%/}/Applications/无线麦.app"' "$SCRIPTS_DIR/postinstall"
-    for sparkle_executable in \
-      '$SPARKLE_VERSION_DIR/Sparkle' \
-      '$SPARKLE_VERSION_DIR/Autoupdate' \
-      '$SPARKLE_VERSION_DIR/Updater.app/Contents/MacOS/Updater' \
-      '$SPARKLE_VERSION_DIR/XPCServices/Installer.xpc/Contents/MacOS/Installer' \
-      '$SPARKLE_VERSION_DIR/XPCServices/Downloader.xpc/Contents/MacOS/Downloader'; do
-      /usr/bin/grep -Fq "$sparkle_executable" "$SCRIPTS_DIR/postinstall"
-    done
-    /usr/bin/grep -Fqx 'for app_executable in "${APP_EXECUTABLES[@]}"; do' "$SCRIPTS_DIR/postinstall"
-    /usr/bin/grep -Fqx '  /bin/chmod 755 "$app_executable"' "$SCRIPTS_DIR/postinstall"
-    /usr/bin/grep -Fqx '  test -x "$app_executable"' "$SCRIPTS_DIR/postinstall"
-    /usr/bin/grep -Fqx '/usr/bin/codesign --verify --deep --strict "$APP_DESTINATION"' "$SCRIPTS_DIR/postinstall"
     /usr/bin/grep -Fq '/usr/sbin/sysctl -in hw.optional.arm64' "$SCRIPTS_DIR/preinstall"
     /usr/bin/grep -Fq '/usr/sbin/sysctl -in hw.optional.arm64' "$SCRIPTS_DIR/postinstall"
     if /usr/bin/grep -Fq '/usr/bin/uname -m' "$SCRIPTS_DIR/preinstall" "$SCRIPTS_DIR/postinstall"; then
@@ -178,23 +167,10 @@ case "$MODE" in
       "$SCRIPTS_DIR/postinstall"
     /usr/bin/grep -Fqx 'if [[ "$DRIVER_CHANGED" -eq 1 ]]; then' "$SCRIPTS_DIR/postinstall"
     /usr/bin/grep -Fqx '  /usr/bin/killall coreaudiod' "$SCRIPTS_DIR/postinstall"
-    /usr/bin/grep -Fq '/bin/launchctl asuser "$CONSOLE_UID"' "$SCRIPTS_DIR/postinstall"
-    /usr/bin/grep -Fq '/usr/bin/sudo -u "$CONSOLE_USER" /usr/bin/open "$APP_DESTINATION"' "$SCRIPTS_DIR/postinstall"
     /usr/sbin/pkgutil --expand-full "$PACKAGE" "$FULL_EXPANDED"
-    PAYLOAD_APP="$(/usr/bin/find "$FULL_EXPANDED" -type d -path '*/Applications/Remote Mic.app' -print -quit)"
     PAYLOAD_DRIVER="$(/usr/bin/find "$FULL_EXPANDED" -type d -path '*/Library/Application Support/RemoteMic/Installer/MiRemoteV2ch.driver' -print -quit)"
-    test -n "$PAYLOAD_APP"
     test -n "$PAYLOAD_DRIVER"
-    test "$(/usr/bin/lipo -archs "$PAYLOAD_APP/Contents/MacOS/RemoteMic")" = "$RELEASE_ARCH"
     test "$(/usr/bin/lipo -archs "$PAYLOAD_DRIVER/Contents/MacOS/MiRemoteV2ch")" = "$RELEASE_ARCH"
-    test "$(/usr/bin/plutil -extract LSMinimumSystemVersion raw -o - \
-      "$PAYLOAD_APP/Contents/Info.plist")" = "$RELEASE_MIN_SYSTEM_VERSION"
-    test "$(/usr/bin/plutil -extract SUFeedURL raw -o - \
-      "$PAYLOAD_APP/Contents/Info.plist")" = "$RELEASE_FEED_URL"
-    test "$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - \
-      "$PAYLOAD_APP/Contents/Info.plist")" = "$VERSION"
-    test "$(/usr/bin/plutil -extract CFBundleVersion raw -o - \
-      "$PAYLOAD_APP/Contents/Info.plist")" = "$BUILD"
     ;;
   uninstall)
     test -f "$PACKAGE_INFO"

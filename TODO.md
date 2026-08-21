@@ -1,5 +1,12 @@
 # TODO
 
+- [ ] 拆分安装制品，修复 pkg 删除已安装 App（待真机验收）
+  - `v1.8.25-fork.2` 的 DMG 会因 macOS bundle relocation 把安装目标改写到 Launch Services 记录的旧路径，删除用户正在使用的 `/Applications/Remote Mic.app`，随后 `postinstall` 因目标不存在而失败（Code=112）。用户偏好被新版按全新安装重写。该 DMG 资产已从 Release 撤下并加了警告。
+  - 根因：`pkgbuild --root` 未传 `--component-plist`，app bundle 的 `BundleIsRelocatable` 默认为真，而 payload 里同时含 App 与驱动。任何把 App 放在非 `/Applications` 位置的用户都会触发，不限开发机。
+  - 修复：按分发形态拆开，让 App 彻底不经过 pkg。`build-dmg.sh` 改为拖拽式 App DMG（App + `Applications` 符号链接，无 pkg、无 BOM、无脚本）；新增 `build-driver-dmg.sh` 出驱动 DMG，内含安装与卸载两个 pkg；驱动组件包移除 App payload，`preinstall`/`postinstall` 删除全部 App 逻辑；`verify-doubao-driver-pkg.sh` 增加"payload 不得含 `./Applications/`、脚本不得引用 `APP_DESTINATION`"反向门禁；`verify-dmg.sh` 改为校验拖拽结构。驱动包体积由 6.8 MB 降至 52 KB。
+  - 已完成：247 项 Swift 测试、42 项项目自检、两个 DMG 构建与结构校验、`lsbom` 实测驱动 payload 中 `Applications` 条目为 0、仓库边界与依赖 pin 检查通过。
+  - 待完成：真机拖拽安装与驱动安装/卸载验收，尤其 SI-02（存在非标准位置同 Bundle ID App 时拖拽安装不得触发重定位）。手册见 [`Testing/SplitInstallerArtifacts.md`](Testing/SplitInstallerArtifacts.md)，缺陷记录见 [`Bugs/2026-08-21-installer-bundle-relocation-deleted-installed-app.md`](Bugs/2026-08-21-installer-bundle-relocation-deleted-installed-app.md)。
+
 - [ ] 修复遥控器长时间休眠重连后自定义按键映射失效（待真机验收）
   - 现场为 `1.8.17`，`1.8.25-fork.1` 同样存在。遥控器隔夜休眠后重连，写 HID 映射匹配到 0 个服务，`HIDPermissionGate` 门禁不通过，按键监听被永久拒绝，普通按键退回 macOS 原生行为且当天不会自行恢复。语音键不受影响，用户配置也未丢失。
   - 根因：HID event system 注册遥控器服务的时机与 BLE 连接完成相互独立，`matched=0` 是瞬时"尚未就绪"，但被当作终局判定消费，且无任何路径重新评估（权限轮询定时器在启动被拒时不存在，`HID UPDATE RECOVERY` 只在 Sparkle 更新后触发）。
