@@ -6,6 +6,24 @@ enum AppConfigurationError: Error {
     case invalidValues
 }
 
+/// What an import refused to adopt. An exported configuration file is the app's only trust
+/// boundary: it travels between Macs through downloads and chat, and it carries application
+/// paths, bundle identifiers and keyboard shortcuts that a remote button later launches or
+/// synthesizes. Entries that cannot be trusted are dropped instead of installed, and this
+/// report is what turns a silent drop into something the user is told about.
+struct ConfigurationImportReport: Equatable {
+    /// Storage keys of the settings that lost at least one entry. Deliberately the same
+    /// vocabulary the corrupted-load notice already maps to user-facing names.
+    var rejectedEntryStorageKeys: [String] = []
+    /// Custom applications that are structurally fine but absent from this Mac. They are kept
+    /// so a configuration exported from a better-equipped Mac survives the trip.
+    var applicationsMissingOnThisMac: [String] = []
+
+    var isClean: Bool {
+        rejectedEntryStorageKeys.isEmpty && applicationsMissingOnThisMac.isEmpty
+    }
+}
+
 private struct PersonalizedConfiguration: Codable {
     let formatVersion: Int
     let gainDB: Double
@@ -252,6 +270,7 @@ final class AppSettings: ObservableObject {
         static let dailyStatistics = "usage.dailyStatistics"
         static let voiceSessionRanking = "usage.voiceSessionRanking"
         static let trustedPhoneIdentityFingerprints = "security.trustedPhoneIdentityFingerprints"
+        static let trustedPhoneIdentityTrustDates = "security.trustedPhoneIdentityTrustDates"
         static let onboardingCompletedVersion = "onboarding.completedVersion"
         static let onboardingStep = "onboarding.step"
         static let onboardingVoiceTool = "onboarding.voiceTool"
@@ -395,13 +414,15 @@ final class AppSettings: ObservableObject {
         }
     }
 
-    @Published private(set) var trustedPhoneIdentityFingerprints: Set<String> {
-        didSet {
-            defaults.set(
-                trustedPhoneIdentityFingerprints.sorted(),
-                forKey: Keys.trustedPhoneIdentityFingerprints
-            )
-        }
+    /// When each phone or watch identity was approved. The plain string set this replaced had no
+    /// notion of time, so one approval trusted a device for the life of the installation.
+    @Published private(set) var trustedPhoneIdentityTrustDates: [String: Date] {
+        didSet { persistTrustedPhoneIdentities() }
+    }
+
+    /// Kept as the identity set the connection page and callers already read.
+    var trustedPhoneIdentityFingerprints: Set<String> {
+        Set(trustedPhoneIdentityTrustDates.keys)
     }
 
     @Published private(set) var onboardingCompletedVersion: Int {
@@ -436,6 +457,11 @@ final class AppSettings: ObservableObject {
     /// bytes are preserved under "<key>.corrupt" so a reset is recoverable and visible
     /// instead of looking like a first run.
     @Published private(set) var corruptedSettingKeys: [String] = []
+
+    /// What the last import in this session refused to adopt, or `nil` when it adopted
+    /// everything. In memory only: it describes one user action, not stored state, and it must
+    /// not outlive the session in which the user imported the file.
+    @Published private(set) var configurationImportNotice: ConfigurationImportReport?
 
     /// Splits "never saved" from "saved but unreadable". Only the latter is a fault, and
     /// silently treating it as a first run is what let user configuration disappear.
@@ -588,9 +614,25 @@ final class AppSettings: ObservableObject {
                 corrupted: &corruptedKeys
             ) ?? []
         )
-        trustedPhoneIdentityFingerprints = Set(
-            defaults.stringArray(forKey: Keys.trustedPhoneIdentityFingerprints) ?? []
+        let loadedAt = Date()
+        let storedTrustDates = Self.storedTrustedPhoneIdentities(in: defaults)
+        // Upgrading must not sign every already-approved device out, so a legacy entry is
+        // stamped at this load and starts its window from here.
+        var migratedTrustDates = storedTrustDates
+        for fingerprint in defaults.stringArray(forKey: Keys.trustedPhoneIdentityFingerprints) ?? []
+        where migratedTrustDates[fingerprint] == nil {
+            migratedTrustDates[fingerprint] = loadedAt
+        }
+        let currentTrustDates = Self.trustedPhoneIdentities(
+            in: migratedTrustDates,
+            currentAt: loadedAt
         )
+        trustedPhoneIdentityTrustDates = currentTrustDates
+        if currentTrustDates != storedTrustDates {
+            // `didSet` never fires for the initial assignment inside `init`, so expired and
+            // migrated entries have to be written back here or they would linger forever.
+            Self.persistTrustedPhoneIdentities(currentTrustDates, in: defaults)
+        }
         onboardingCompletedVersion = defaults.integer(forKey: Keys.onboardingCompletedVersion)
         onboardingStep = defaults.string(forKey: Keys.onboardingStep)
             .flatMap(OnboardingStep.init(rawValue:))
@@ -1217,17 +1259,62 @@ final class AppSettings: ObservableObject {
         }
     }
 
-    func isPhoneIdentityTrusted(_ fingerprint: String) -> Bool {
-        trustedPhoneIdentityFingerprints.contains(fingerprint)
+    /// How long one approval keeps letting a phone or watch in unattended.
+    ///
+    /// 30 days: long enough that a device in daily use is never re-prompted for a month, short
+    /// enough that a device that was lent away, sold or lost stops being accepted silently
+    /// within a month. Re-approval costs one two-digit code confirmation.
+    static let trustedPhoneIdentityLifetime: TimeInterval = 30 * 24 * 60 * 60
+
+    func isPhoneIdentityTrusted(_ fingerprint: String, at date: Date = Date()) -> Bool {
+        guard let trustedAt = trustedPhoneIdentityTrustDates[fingerprint] else { return false }
+        return Self.isTrustCurrent(trustedAt, at: date)
     }
 
-    func trustPhoneIdentity(_ fingerprint: String) {
+    func trustPhoneIdentity(_ fingerprint: String, at date: Date = Date()) {
         guard !fingerprint.isEmpty else { return }
-        trustedPhoneIdentityFingerprints.insert(fingerprint)
+        var updated = Self.trustedPhoneIdentities(
+            in: trustedPhoneIdentityTrustDates,
+            currentAt: date
+        )
+        updated[fingerprint] = date
+        trustedPhoneIdentityTrustDates = updated
     }
 
     func clearTrustedPhoneIdentities() {
-        trustedPhoneIdentityFingerprints.removeAll()
+        trustedPhoneIdentityTrustDates = [:]
+    }
+
+    /// A stamp this Mac cannot have written in the past — a future date left by a clock jump or
+    /// an edited preference file — is not evidence of an approval, so it expires too.
+    private static func isTrustCurrent(_ trustedAt: Date, at date: Date) -> Bool {
+        let age = date.timeIntervalSince(trustedAt)
+        return age >= 0 && age < trustedPhoneIdentityLifetime
+    }
+
+    private static func trustedPhoneIdentities(
+        in identities: [String: Date],
+        currentAt date: Date
+    ) -> [String: Date] {
+        identities.filter { isTrustCurrent($0.value, at: date) }
+    }
+
+    private static func storedTrustedPhoneIdentities(in defaults: UserDefaults) -> [String: Date] {
+        (defaults.dictionary(forKey: Keys.trustedPhoneIdentityTrustDates) as? [String: Date]) ?? [:]
+    }
+
+    private func persistTrustedPhoneIdentities() {
+        Self.persistTrustedPhoneIdentities(trustedPhoneIdentityTrustDates, in: defaults)
+    }
+
+    /// The legacy fingerprint array stays in sync so a revocation is also a revocation for an
+    /// older build, and so a downgrade cannot resurrect a device the user just removed.
+    private static func persistTrustedPhoneIdentities(
+        _ identities: [String: Date],
+        in defaults: UserDefaults
+    ) {
+        defaults.set(identities, forKey: Keys.trustedPhoneIdentityTrustDates)
+        defaults.set(identities.keys.sorted(), forKey: Keys.trustedPhoneIdentityFingerprints)
     }
 
     func recordLaunchAndDetectCompletedUpdate(
@@ -1301,6 +1388,11 @@ final class AppSettings: ObservableObject {
         return try encoder.encode(configuration)
     }
 
+    /// Adopts a payload that arrived from outside this Mac. Document-level values still reject
+    /// the whole file (an unknown format or an impossible gain means nothing in it can be
+    /// trusted), but a single bad entry only loses that entry: throwing the file away would
+    /// punish a user whose configuration is 99% fine. Everything dropped is published in
+    /// `configurationImportNotice` so the user is told rather than silently downgraded.
     func importConfiguration(from data: Data) throws {
         let configuration = try JSONDecoder().decode(PersonalizedConfiguration.self, from: data)
         guard configuration.formatVersion == 1 else {
@@ -1310,42 +1402,102 @@ final class AppSettings: ObservableObject {
             throw AppConfigurationError.invalidValues
         }
 
+        var rejected: Set<String> = []
+        var missingApplications: [String] = []
+
         let importedBindings = Dictionary(
-            uniqueKeysWithValues: configuration.buttonBindings.compactMap { key, value in
-                RemoteButton(rawValue: key).map { ($0, value) }
-            }
+            uniqueKeysWithValues: configuration.buttonBindings
+                .compactMap { key, value -> (RemoteButton, ButtonAction)? in
+                    guard let button = RemoteButton(rawValue: key) else {
+                        rejected.insert(Keys.buttonBindings)
+                        return nil
+                    }
+                    return (button, value)
+                }
         )
         let importedShortcuts = Dictionary(
-            uniqueKeysWithValues: configuration.buttonShortcuts.compactMap { key, value in
-                RemoteButton(rawValue: key).map { ($0, value) }
-            }
+            uniqueKeysWithValues: configuration.buttonShortcuts
+                .compactMap { key, value -> (RemoteButton, CustomKeyboardShortcut)? in
+                    guard let button = RemoteButton(rawValue: key),
+                          let shortcut = Self.validatedShortcut(value)
+                    else {
+                        rejected.insert(Keys.buttonShortcuts)
+                        return nil
+                    }
+                    return (button, shortcut)
+                }
         )
         let importedApplicationProfileIDs = Dictionary(
-            uniqueKeysWithValues: (configuration.buttonApplicationProfileIDs ?? [:]).compactMap { key, value in
-                RemoteButton(rawValue: key).map { ($0, value) }
-            }
+            uniqueKeysWithValues: (configuration.buttonApplicationProfileIDs ?? [:])
+                .compactMap { key, value -> (RemoteButton, UUID)? in
+                    guard let button = RemoteButton(rawValue: key) else {
+                        rejected.insert(Keys.buttonApplicationProfileIDs)
+                        return nil
+                    }
+                    return (button, value)
+                }
         )
         let importedSecondaryBindings: [RemoteButton: [ButtonTrigger: ConfiguredButtonAction]] =
             Dictionary(
-                uniqueKeysWithValues: configuration.secondaryButtonBindings.compactMap { buttonKey, bindings in
-                    guard let button = RemoteButton(rawValue: buttonKey) else { return nil }
+                uniqueKeysWithValues: configuration.secondaryButtonBindings.compactMap {
+                    buttonKey, bindings -> (RemoteButton, [ButtonTrigger: ConfiguredButtonAction])? in
+                    guard let button = RemoteButton(rawValue: buttonKey) else {
+                        rejected.insert(Keys.secondaryButtonBindings)
+                        return nil
+                    }
                     let parsed = Dictionary(
-                        uniqueKeysWithValues: bindings.compactMap { triggerKey, binding in
-                            ButtonTrigger(rawValue: triggerKey).map { ($0, binding) }
+                        uniqueKeysWithValues: bindings.compactMap {
+                            triggerKey, binding -> (ButtonTrigger, ConfiguredButtonAction)? in
+                            guard let trigger = ButtonTrigger(rawValue: triggerKey),
+                                  let validated = Self.validatedConfiguredAction(binding)
+                            else {
+                                rejected.insert(Keys.secondaryButtonBindings)
+                                return nil
+                            }
+                            return (trigger, validated)
                         }
                     )
                     return parsed.isEmpty ? nil : (button, parsed)
                 }
             )
+        let importedApplicationProfiles = (configuration.customApplicationProfiles ?? [])
+            .compactMap { profile -> CustomApplicationProfile? in
+                switch Self.validatedApplicationProfile(profile) {
+                case let .usable(profile):
+                    return profile
+                case let .notInstalledOnThisMac(profile):
+                    missingApplications.append(profile.displayName)
+                    return profile
+                case .rejected:
+                    rejected.insert(Keys.customApplicationProfiles)
+                    return nil
+                }
+            }
+        let importedAudioDeviceUID: String
+        if configuration.selectedAudioDeviceUID.count <= Self.maximumImportedIdentifierLength {
+            importedAudioDeviceUID = configuration.selectedAudioDeviceUID
+        } else {
+            importedAudioDeviceUID = ""
+            rejected.insert(Keys.selectedAudioDeviceUID)
+        }
+        let importedRecordingBackup: ConfiguredButtonAction?
+        if let backup = configuration.continuousRecordingPowerBindingBackup {
+            importedRecordingBackup = Self.validatedConfiguredAction(backup)
+            if importedRecordingBackup == nil {
+                rejected.insert(Keys.continuousRecordingPowerBindingBackup)
+            }
+        } else {
+            importedRecordingBackup = nil
+        }
 
         gainDB = configuration.gainDB
-        selectedAudioDeviceUID = configuration.selectedAudioDeviceUID
+        selectedAudioDeviceUID = importedAudioDeviceUID
         customMappingEnabled = configuration.customMappingEnabled
         buttonBindings = Self.defaultBindings.merging(importedBindings) { _, imported in imported }
         buttonShortcuts = importedShortcuts
         buttonApplicationProfileIDs = importedApplicationProfileIDs
         secondaryButtonBindings = importedSecondaryBindings
-        customApplicationProfiles = configuration.customApplicationProfiles ?? []
+        customApplicationProfiles = importedApplicationProfiles
         applicationLanguage = configuration.applicationLanguage
         showDockIcon = configuration.showDockIcon
         if let openMainWindowAtLaunch = configuration.openMainWindowAtLaunch {
@@ -1360,8 +1512,139 @@ final class AppSettings: ObservableObject {
         voiceKeyUsesRemoteMicrophone = configuration.voiceKeyUsesRemoteMicrophone ?? true
         applyContinuousRecordingExperimentState(
             enabled: configuration.experimentalContinuousRecordingEnabled ?? false,
-            backup: configuration.continuousRecordingPowerBindingBackup
+            backup: importedRecordingBackup
         )
+
+        let report = ConfigurationImportReport(
+            rejectedEntryStorageKeys: rejected.sorted(),
+            applicationsMissingOnThisMac: missingApplications.sorted()
+        )
+        if !report.isClean {
+            AppLogger.shared.write(
+                "SETTINGS import_filtered rejected=\(report.rejectedEntryStorageKeys.joined(separator: ",")) " +
+                    "missing_apps=\(report.applicationsMissingOnThisMac.count)"
+            )
+        }
+        configurationImportNotice = report.isClean ? nil : report
+    }
+
+    /// Bundle identifiers, audio device identifiers and display names are matched or displayed,
+    /// never executed, so a length bound is the whole requirement for them.
+    private static let maximumImportedIdentifierLength = 256
+    private static let maximumImportedPathLength = 1_024
+    private static let maximumImportedKeyLabelLength = 64
+    /// macOS virtual key codes are 7-bit; this app's own label table stops at 126 and
+    /// `RemoteButton.nativeEvent` never exceeds it. A larger code is not a key.
+    private static let maximumImportedKeyCode: UInt16 = 127
+
+    /// `nil` when the shortcut is outside what the app can record or inject. A shortcut that
+    /// passes is rebuilt through the normal initializer, which applies exactly the mask a freshly
+    /// recorded shortcut gets — so the recorded left/right modifier side is preserved and only
+    /// bits the app never records are discarded.
+    private static func validatedShortcut(
+        _ shortcut: CustomKeyboardShortcut
+    ) -> CustomKeyboardShortcut? {
+        guard shortcut.keyCode <= maximumImportedKeyCode,
+              shortcut.keyLabel.count <= maximumImportedKeyLabelLength
+        else { return nil }
+        return CustomKeyboardShortcut(
+            keyCode: shortcut.keyCode,
+            modifierFlags: shortcut.modifierFlags,
+            keyLabel: shortcut.keyLabel
+        )
+    }
+
+    /// `nil` when the binding carries a shortcut the app cannot trust. The whole binding goes,
+    /// because a `customShortcut` action without its shortcut is a button that does nothing.
+    private static func validatedConfiguredAction(
+        _ binding: ConfiguredButtonAction
+    ) -> ConfiguredButtonAction? {
+        guard let shortcut = binding.shortcut else { return binding }
+        guard let validated = validatedShortcut(shortcut) else { return nil }
+        var result = binding
+        result.shortcut = validated
+        return result
+    }
+
+    private enum ImportedApplicationProfile {
+        case usable(CustomApplicationProfile)
+        case notInstalledOnThisMac(CustomApplicationProfile)
+        case rejected
+    }
+
+    /// The dangerous half of an imported payload: this is what a remote button launches.
+    ///
+    /// Only a structurally malformed entry is dropped. An entry whose path resolves to nothing,
+    /// or to a bundle whose identifier no longer matches the declared one, is kept and reported
+    /// instead: `KeyboardInjector.resolveCustomApplicationURL` re-checks that match before
+    /// opening anything, so dropping it here would destroy a binding without adding safety —
+    /// and refusing it outright would break the entire point of moving a configuration to a Mac
+    /// that has not installed everything yet.
+    private static func validatedApplicationProfile(
+        _ profile: CustomApplicationProfile
+    ) -> ImportedApplicationProfile {
+        guard profile.displayName.count <= maximumImportedIdentifierLength,
+              isWellFormedBundleIdentifier(profile.bundleIdentifier),
+              isWellFormedApplicationBundlePath(profile.applicationPath)
+        else { return .rejected }
+
+        var sanitized = profile
+        // Both focus paths are already nil-guarded at use, so clearing an untrusted detail
+        // degrades focus rather than losing the application.
+        sanitized.focusShortcut = profile.focusShortcut.flatMap(validatedShortcut)
+        sanitized.accessibilityTarget = profile.accessibilityTarget
+            .flatMap(validatedAccessibilityTarget)
+
+        let url = URL(fileURLWithPath: sanitized.applicationPath)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return .notInstalledOnThisMac(sanitized)
+        }
+        guard Bundle(url: url)?.bundleIdentifier == sanitized.bundleIdentifier else {
+            // The launch path re-checks this match and falls back to a bundle-identifier
+            // lookup, so degrading beats deleting a binding the user still wants.
+            return .notInstalledOnThisMac(sanitized)
+        }
+        return .usable(sanitized)
+    }
+
+    private static func isWellFormedBundleIdentifier(_ identifier: String) -> Bool {
+        guard !identifier.isEmpty,
+              identifier.count <= maximumImportedIdentifierLength,
+              !identifier.hasPrefix("."),
+              !identifier.hasSuffix("."),
+              !identifier.contains("..")
+        else { return false }
+        // Deliberately not ASCII-only: Script Editor derives
+        // com.apple.ScriptEditor.id.<app name> from the app's name verbatim, so a CJK-named
+        // app has a non-ASCII identifier that the picker already accepts. What matters here
+        // is that the identifier cannot smuggle path or separator characters.
+        return identifier.allSatisfy { character in
+            character.isLetter || character.isNumber || "._-".contains(character)
+        }
+    }
+
+    private static func isWellFormedApplicationBundlePath(_ path: String) -> Bool {
+        guard path.hasPrefix("/"), path.count <= maximumImportedPathLength else { return false }
+        guard !path.split(separator: "/").contains("..") else { return false }
+        return URL(fileURLWithPath: path).pathExtension.lowercased() == "app"
+    }
+
+    private static func validatedAccessibilityTarget(
+        _ target: AccessibilityFocusTarget
+    ) -> AccessibilityFocusTarget? {
+        let fields = [
+            target.role, target.identifier, target.title, target.description,
+            target.help, target.placeholder, target.context, target.windowTitle,
+        ]
+        guard fields.allSatisfy({ $0.count <= maximumImportedIdentifierLength }) else {
+            return nil
+        }
+        if let frame = target.normalizedFrame {
+            guard [frame.x, frame.y, frame.width, frame.height].allSatisfy(\.isFinite) else {
+                return nil
+            }
+        }
+        return target
     }
 
     private func saveBindings() {

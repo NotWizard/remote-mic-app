@@ -473,6 +473,7 @@
 "configuration.import.panel_title" = "导入个性化配置";
 "configuration.import.prompt" = "导入";
 "configuration.import.success" = "配置已导入并应用";
+"configuration.import.partial" = "配置已导入，但有一部分没有生效，详情见「按键映射」页顶部的提示";
 "configuration.import.unsupported_version" = "导入失败：不支持此配置版本";
 "configuration.import.invalid_file" = "导入失败：配置文件无效";
 "onboarding.phase.prepare" = "准备";
@@ -614,3 +615,7 @@
 "settings.corrupted.item.remote_device" = "遥控器设备配置";
 "settings.corrupted.item.statistics" = "使用统计记录";
 "settings.corrupted.item.other" = "其他设置";
+"settings.import_notice.title" = "导入的配置里有一部分没有生效";
+"settings.import_notice.rejected" = "这些内容在导入文件里不可信，已经跳过：%1$@。";
+"settings.import_notice.missing_app" = "这些应用还没装在这台 Mac 上，设置已经保留，装好后对应按键就能用：%1$@。";
+"settings.import_notice.next_step" = "被跳过的内容请在本页重新设置一次。";

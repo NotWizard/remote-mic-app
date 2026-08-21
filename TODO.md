@@ -15,7 +15,7 @@
 | A7 | 待开始 | 蓝牙桥零行为测试；全库 28% 断言只验证源码文本仍存在 | `XiaomiBluetoothBridge.swift`、`Tests/` |
 | A8 | 待开始 | 未标 `@MainActor`，21 个 `@Published` 靠手写 main hop 维持，`webRemoteState` 回调已漏 | `BridgeAppModel.swift:313-315` |
 | A9 | 待开始 | 52 处中文渲染 10–11pt、授权弹窗硬编码中文、`minSize` 使 800×650 门禁不可达、窄窗压遥控器图 | `SettingsView.swift`、`BridgeAppModel.swift:1580-1596`、`RemoteMicApp.swift:718` |
-| A10 | 待开始 | 配置导入仅校验两个字段即接收任意 app 路径与快捷键；信任存储无过期无吊销 | `AppSettings.swift:1247` |
+| A10 | **已修复（本仓部分）** | 配置导入仅校验两个字段即接收任意 app 路径与快捷键；信任存储无过期无吊销。导入现按字段域逐条校验并丢弃不可信条目，结果经既有 `CorruptedSettingsNotice` 内联上报；信任条目加 30 天过期。复核否决了第一版的纯 ASCII bundle id 限制——脚本编辑器导出的中文名 App 标识本就含中文，实测会让**已装在本机**的 App 配置归零；同时把 bundle id 不一致从丢弃改为降级提示（执行路径本来就会再判等，丢弃只销毁绑定不增加安全性）。Keychain 密钥对与远程指令逐帧认证需改私有仓库协议，**不在本仓实现**，残余风险已记录 | `AppSettings.swift`、`SettingsView.swift` |
 
 跨私有仓库的协议变更（A10 的信任改密钥、远程指令逐帧认证）不在本仓实现，只做本仓可收敛部分并记录。
 

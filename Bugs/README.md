@@ -1,5 +1,7 @@
 # Bug 记录
 
+- [导入配置几乎不校验，可为按键装上任意应用与快捷键触发器](./2026-08-21-configuration-import-accepts-arbitrary-app-and-shortcut.md)
+- [排空尾音期间音频重配置导致语音会话永久卡死](./2026-08-21-voice-session-wedges-when-audio-reconfigures-mid-drain.md)
 - [遥控器不在范围内时每小时 317 次蓝牙重连](./2026-08-21-bluetooth-reconnect-storm-when-remote-absent.md)
 - [按键没反应时日志说不出原因](./2026-08-21-hid-silent-returns-hide-why-a-button-did-nothing.md)
 - [Apple Watch BLE 语音已启动但没有有效电平](./2026-08-18-watch-ble-audio-no-signal.md)
@@ -40,6 +42,8 @@
 
 | 时间 | Bug | 状态 |
 | --- | --- | --- |
+| 2026-08-21 | [导入配置几乎不校验，可为按键装上任意应用与快捷键触发器](./2026-08-21-configuration-import-accepts-arbitrary-app-and-shortcut.md) | 已修复，自动化通过；真机与真实第三方 APP 未验收 |
+| 2026-08-21 | [排空尾音期间音频重配置导致语音会话永久卡死](./2026-08-21-voice-session-wedges-when-audio-reconfigures-mid-drain.md) | 已修复，自动化通过；真机与真实音频设备切换验收未完成 |
 | 2026-08-18 | [Apple Watch BLE 语音已启动但没有有效电平](./2026-08-18-watch-ble-audio-no-signal.md) | 诊断修复完成，等待真机验收 |
 | 2026-07-29 | [睡眠或音频路由变化后打开页面崩溃](./2026-07-29-audio-route-change-player-crash.md) | 已修复 |
 | 2026-07-30 | [Automatic Application Focus Investigation](./2026-07-30-automatic-application-focus.md) | 已修复 |

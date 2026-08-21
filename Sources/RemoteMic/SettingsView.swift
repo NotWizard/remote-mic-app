@@ -198,6 +198,34 @@ enum CorruptedSettingsNotice {
         let list = itemKeys.map(localize).joined(separator: localize(separatorKey))
         return String(format: localize(summaryKey), list)
     }
+
+    // An imported configuration arrives from outside this Mac, so entries it could not vouch for
+    // are dropped. That reuses this notice rather than a second mechanism: the user recognizes
+    // the same settings, whether they were lost to corruption or refused on import.
+    static let importTitleKey = "settings.import_notice.title"
+    static let importRejectedKey = "settings.import_notice.rejected"
+    static let importMissingApplicationKey = "settings.import_notice.missing_app"
+    static let importNextStepKey = "settings.import_notice.next_step"
+
+    static func importRejectionSummary(
+        for storageKeys: [String],
+        localize: (String) -> String
+    ) -> String? {
+        let itemKeys = affectedItemKeys(for: storageKeys)
+        guard !itemKeys.isEmpty else { return nil }
+        let list = itemKeys.map(localize).joined(separator: localize(separatorKey))
+        return String(format: localize(importRejectedKey), list)
+    }
+
+    /// Names come from the imported file, so they are only ever displayed, never resolved.
+    static func missingApplicationSummary(
+        for applicationNames: [String],
+        localize: (String) -> String
+    ) -> String? {
+        guard !applicationNames.isEmpty else { return nil }
+        let list = applicationNames.joined(separator: localize(separatorKey))
+        return String(format: localize(importMissingApplicationKey), list)
+    }
 }
 
 struct VersionTapRevealCounter {
@@ -980,6 +1008,7 @@ struct SettingsView: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 16) {
                         corruptedSettingsBanner
+                        configurationImportBanner
 
                         RemoteMappingCanvas(
                             selectedButton: $selectedRemoteButton,
@@ -1055,6 +1084,50 @@ struct SettingsView: View {
                         Text(localization.text(CorruptedSettingsNotice.nextStepKey))
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    /// Same inline treatment as the corrupted-settings notice, and for the same reason: an import
+    /// that quietly dropped an entry must leave a trace the user can still read afterwards, and
+    /// this repository's interface rules keep page-level notices flat inside the page rather than
+    /// behind a sheet. Explicit 12pt and up, because macOS `.caption` is 10pt.
+    @ViewBuilder
+    private var configurationImportBanner: some View {
+        if let notice = settings.configurationImportNotice {
+            let rejected = CorruptedSettingsNotice.importRejectionSummary(
+                for: notice.rejectedEntryStorageKeys,
+                localize: localization.text
+            )
+            let missing = CorruptedSettingsNotice.missingApplicationSummary(
+                for: notice.applicationsMissingOnThisMac,
+                localize: localization.text
+            )
+            GlassPanel {
+                HStack(alignment: .top, spacing: 11) {
+                    Image(systemName: "exclamationmark.shield.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.orange)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(localization.text(CorruptedSettingsNotice.importTitleKey))
+                            .font(.system(size: 13, weight: .semibold))
+                        if let rejected {
+                            Text(rejected)
+                                .font(.system(size: 12))
+                            Text(localization.text(CorruptedSettingsNotice.importNextStepKey))
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                        if let missing {
+                            Text(missing)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -2872,11 +2945,19 @@ struct SettingsView: View {
             setDockIconVisible(settings.showDockIcon)
             model.applyAudioSettings(reason: "configuration_import")
             model.applyHIDSettings()
-            configurationStatus = ConfigurationStatus(
-                message: LocalizedMessage("configuration.import.success"),
-                tint: .green,
-                systemImage: "checkmark.circle.fill"
-            )
+            // A partly adopted file must not read as a clean success, or the dropped entries
+            // become the silent failure the validation exists to prevent.
+            configurationStatus = settings.configurationImportNotice == nil
+                ? ConfigurationStatus(
+                    message: LocalizedMessage("configuration.import.success"),
+                    tint: .green,
+                    systemImage: "checkmark.circle.fill"
+                )
+                : ConfigurationStatus(
+                    message: LocalizedMessage("configuration.import.partial"),
+                    tint: .orange,
+                    systemImage: "exclamationmark.shield.fill"
+                )
         } catch AppConfigurationError.unsupportedVersion {
             configurationStatus = ConfigurationStatus(
                 message: LocalizedMessage("configuration.import.unsupported_version"),

@@ -473,6 +473,7 @@
 "configuration.import.panel_title" = "Import Personalized Configuration";
 "configuration.import.prompt" = "Import";
 "configuration.import.success" = "Configuration imported and applied";
+"configuration.import.partial" = "Configuration imported, but part of it is not in use — see the notice at the top of the Button Mapping page";
 "configuration.import.unsupported_version" = "Import failed: this configuration version is not supported";
 "configuration.import.invalid_file" = "Import failed: the configuration file is invalid";
 "onboarding.phase.prepare" = "Prepare";
@@ -614,3 +615,7 @@
 "settings.corrupted.item.remote_device" = "Remote device setup";
 "settings.corrupted.item.statistics" = "Usage history";
 "settings.corrupted.item.other" = "Other settings";
+"settings.import_notice.title" = "Part of the configuration you imported is not in use";
+"settings.import_notice.rejected" = "Left out because the file could not be trusted for them: %1$@.";
+"settings.import_notice.missing_app" = "These apps are not on this Mac yet, so their buttons stay quiet until you install them: %1$@.";
+"settings.import_notice.next_step" = "Set the items that were left out once more on this page.";
