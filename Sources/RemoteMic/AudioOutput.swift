@@ -433,9 +433,7 @@ final class VirtualAudioOutput {
             AppLogger.shared.write("AUDIO WRITE resumed rejected_count=\(rejectedWriteCount) state={\(basicDiagnosticState())}")
             rejectedWriteCount = 0
         }
-        playbackLock.lock()
-        pendingVoiceBufferCount += 1
-        playbackLock.unlock()
+        registerPendingVoiceBuffer()
         player.scheduleBuffer(
             buffer,
             at: nil,
@@ -445,6 +443,16 @@ final class VirtualAudioOutput {
             self?.scheduledVoiceBufferDidFinish()
         }
         return true
+    }
+
+    /// Counts one buffer as queued for playback. Together with
+    /// `scheduledVoiceBufferDidFinish` this is the only source of the pending-buffer
+    /// count that draining waits on, so it is the single seam that drives drain
+    /// bookkeeping without a live output device.
+    func registerPendingVoiceBuffer() {
+        playbackLock.lock()
+        pendingVoiceBufferCount += 1
+        playbackLock.unlock()
     }
 
     func endSession() {
@@ -459,10 +467,12 @@ final class VirtualAudioOutput {
         drainGeneration &+= 1
         let generation = drainGeneration
         let shouldCompleteImmediately = pendingVoiceBufferCount == 0
-        if !shouldCompleteImmediately {
-            drainCompletion = completion
-        }
+        // One slot only, so a new request must hand the previous waiter back rather than
+        // overwrite (and silently lose) it. Invoked after the new drain is armed.
+        let displacedCompletion = drainCompletion
+        drainCompletion = shouldCompleteImmediately ? nil : completion
         playbackLock.unlock()
+        defer { displacedCompletion?() }
 
         if shouldCompleteImmediately {
             flushPlayer()
@@ -486,17 +496,33 @@ final class VirtualAudioOutput {
         }
     }
 
-    private func flushPlayer() {
+    /// Clears drain bookkeeping for an interruption and hands the outstanding drain
+    /// completion back so the caller can invoke it *after* `playbackLock` is released.
+    /// The receiver owns the only remaining reference, which keeps the completion
+    /// one-shot. It must still run: an interruption is an outcome, and dropping it here
+    /// leaves the caller waiting for a drain that can never report back — the fallback
+    /// timer armed by `endSessionAfterDraining` is invalidated by the generation bump
+    /// below.
+    private func takeInterruptedDrainCompletion() -> (() -> Void)? {
         playbackLock.lock()
         let interruptedContexts = pendingVoiceBufferCount > 0 ? pendingDrainLogContexts : []
         pendingVoiceBufferCount = 0
         pendingDrainLogContexts.removeAll()
+        let completion = drainCompletion
         drainCompletion = nil
         drainGeneration &+= 1
         playbackLock.unlock()
         for context in interruptedContexts {
             AppLogger.shared.write("AUDIO PLAYBACK interrupted \(context)")
         }
+        return completion
+    }
+
+    private func flushPlayer() {
+        // Taken before the teardown below so a nested `stop()` cannot pick it up a second
+        // time, and invoked afterwards so it never runs against a half-restarted player.
+        let interruptedDrain = takeInterruptedDrainCompletion()
+        defer { interruptedDrain?() }
         guard let player, engine?.isRunning == true else { return }
         player.stop()
         player.reset()
@@ -509,16 +535,8 @@ final class VirtualAudioOutput {
     }
 
     func stop() {
-        playbackLock.lock()
-        let interruptedContexts = pendingVoiceBufferCount > 0 ? pendingDrainLogContexts : []
-        pendingVoiceBufferCount = 0
-        pendingDrainLogContexts.removeAll()
-        drainCompletion = nil
-        drainGeneration &+= 1
-        playbackLock.unlock()
-        for context in interruptedContexts {
-            AppLogger.shared.write("AUDIO PLAYBACK interrupted \(context)")
-        }
+        let interruptedDrain = takeInterruptedDrainCompletion()
+        defer { interruptedDrain?() }
         removeEngineConfigurationObserver()
         player?.stop()
         engine?.stop()

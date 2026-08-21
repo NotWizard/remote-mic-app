@@ -10,7 +10,7 @@
 | A2 | **已提交** `858bb9c` | `killall coreaudiod` 在 `set -euo pipefail` 下无匹配进程即中止脚本，安装/卸载已完成却报失败 | 4 个安装脚本 |
 | A3 | **已修复** | 日志无轮转、每行开关文件、权限 644；`write` 非 `@autoclosure` 且释放路径缺幂等门，单条消息占日志 47%。折叠经复核否决后改为显式白名单（原启发式会把 1586 行内容不同的消息错误合并，等于把 A6 缺陷推广到 220 类消息）。投影：113242 → 53823 行（−52.5%）、21.49 → 10.59 MB（−50.7%） | `AppLogger.swift:18`、`BridgeAppModel.swift:2074` |
 | A4 | **已修复** | 每轮重建 central + 自建 8s 超时 + 3s 重试，遥控器缺席时 315 次/小时空转；`connect()` 本就永久挂起。改为单 central 常驻、待连请求不再被自我取消、8s 截止时间只改显示状态。缺席 1 小时的连接尝试 **328 → 1**，24 小时 **7855 → 1**（由策略延迟推导，非断言）。复核否决后补两处：唤醒时重新发起（被删掉的 8s 循环原本是睡眠后唯一自愈路径）、`.unauthorized` 分支复位 lifecycle | `XiaomiBluetoothBridge.swift`、`BluetoothLifecycle.swift`、`RemoteMicApp.swift:244` |
-| A5 | 待开始 | `drainCompletion` 单槽被置 nil 却从不调用且作废兜底定时器，`.draining` 无超时出口，语音会话可永久卡死 | `AudioOutput.swift:463/494/516`、`VoiceFnTapSessionController` |
+| A5 | **已修复** | `drainCompletion` 单槽被置 nil 却从不调用且作废兜底定时器，`.draining` 无超时出口，语音会话可永久卡死。改为一次性终结语义：`flushPlayer`/`stop`/重复请求都必须先取出再调用；`.draining` 另加 2 秒代次守卫兜底（`AudioOutput` 的兜底闭包持弱引用，实例释放后不会送达任何回调）。附带修好手机路径 `VoiceFunctionKeyLatch` 因回调丢失而永久按下的问题 | `AudioOutput.swift`、`VoiceFnTapSessionController.swift` |
 | A6 | **已修复** | 关键 `return` 无日志或多种原因压成同一条，线上无法定位。新增 21 个 case 的 `HIDSuppressionReason`，覆盖审计点名的全部 4 处；逐报告热路径经 `logInputIgnored` 以整条消息为折叠键（不同按键/usage 各自成键，不会互相合并），实测 40 次按键由 40 行降为 1 行。既有 `mapping_enabled=` / `power_suppressed=` 字段保留 | `HIDRemoteMonitor.swift`、`RemoteButtons.swift`、`AppLogger.swift` |
 | A7 | 待开始 | 蓝牙桥零行为测试；全库 28% 断言只验证源码文本仍存在 | `XiaomiBluetoothBridge.swift`、`Tests/` |
 | A8 | 待开始 | 未标 `@MainActor`，21 个 `@Published` 靠手写 main hop 维持，`webRemoteState` 回调已漏 | `BridgeAppModel.swift:313-315` |
