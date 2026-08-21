@@ -1041,10 +1041,52 @@ struct RemoteButtonsTests {
         #expect(RemoteButton.buttons(for: [0x52, 0x65, 0xFFFF]) == Set<RemoteButton>([.up, .menu]))
     }
 
-    @Test func HIDCallbacksDoNotDeferReportHandling() throws {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appendingPathComponent("Sources/RemoteMic/HIDRemoteMonitor.swift"), encoding: .utf8)
-        #expect(!source.contains("DispatchQueue.main.async"))
+    /// A HID report must be turned into its action synchronously, on the callback's own
+    /// thread.
+    ///
+    /// This replaces a check that `HIDRemoteMonitor.swift` contained no
+    /// `DispatchQueue.main.async` anywhere in the file. That assertion passed or failed on
+    /// the presence of a string: it broke when an unrelated part of the monitor legitimately
+    /// needed a hop, and it would have kept passing if the report path had been deferred by
+    /// any other means (`perform(_:with:afterDelay:)`, a work item, an actor hop). Driving a
+    /// real report and requiring the action to have happened before `handleSimulatedReport`
+    /// returns tests the property itself: a deferred report leaves the counter at zero
+    /// because the runloop has not turned yet.
+    @Test func HIDReportsAreTurnedIntoActionsSynchronously() throws {
+        let suiteName = "RemoteButtonsTests.syncReport.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settings = AppSettings(defaults: defaults)
+        settings.customMappingEnabled = true
+        settings.setAction(.escape, for: .ok)
+        let profileID = try #require(settings.selectedRemoteProfileID)
+
+        var performedActions = 0
+        let monitor = HIDRemoteMonitor(
+            settings: settings,
+            profileID: profileID,
+            ownsEventSuppressor: false,
+            runtimePermissions: { true },
+            actionPerformer: { _, _, _ in
+                performedActions += 1
+                return true
+            }
+        )
+        monitor.onButtonPressed = { _, _, _ in
+            (profileID: profileID, shouldPerformAction: true)
+        }
+        monitor.connectSimulatedDevice(fingerprint: "sync-report", profileID: profileID)
+
+        #expect(performedActions == 0)
+        monitor.handleSimulatedReport(
+            reportID: 1,
+            data: Data([RemoteButton.ok.hidUsage.lowByte, 0])
+        )
+        // No runloop turn between the report and this line: anything that deferred the
+        // work would still be pending here.
+        #expect(performedActions == 1)
+
+        monitor.disconnectSimulatedDevice()
     }
 
     @Test func powerSuppressionIsArmedBeforeButtonCallbacksAndMonitoring() throws {

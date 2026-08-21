@@ -93,15 +93,6 @@ private final class XiaomiPeripheralDelegateProxy: NSObject, CBPeripheralDelegat
 }
 
 final class XiaomiBluetoothBridge: NSObject {
-    private static let defaultCapabilities = ATVVCapabilities(
-        version: 0x0100,
-        codecs: 0x02,
-        interaction: 0x03,
-        frameSize: 120,
-        selectedCodec: 0x02,
-        sampleRate: 16_000
-    )
-
     private let settings: AppSettings
     private weak var delegate: XiaomiBluetoothBridgeDelegate?
     private let targetIdentifier: UUID?
@@ -120,20 +111,14 @@ final class XiaomiBluetoothBridge: NSObject {
     private var pendingConnectDeadlineWorkItem: DispatchWorkItem?
     private var initializationTimeoutWorkItem: DispatchWorkItem?
     private var capabilitiesRequested = false
-    private var capabilitiesConfirmed = false
     private var requestedReconnectDelay: TimeInterval?
     private var generationCounter: UInt64 = 0
     private var lifecycle: BluetoothLifecyclePhase = .stopped
     private var shouldRun = false
-    private var capabilities = XiaomiBluetoothBridge.defaultCapabilities
-    private var decoder = IMAADPCMDecoder()
-    private var accumulator = FrameAccumulator()
-    private var pendingSync: (predictor: Int, stepIndex: Int)?
-    private var streaming = false
-    private var microphoneOpened = false
-    private var cancelledMicrophoneOpenAt: Date?
-    private var sessionID: UInt8 = 0
-    private var lastStopAt: Date?
+    /// Everything about the voice session itself. Kept free of CoreBluetooth so the
+    /// protocol handling can be replayed by tests; this bridge is the adapter that owns
+    /// the radio and applies the effects the core returns.
+    private let session = ATVVVoiceSessionCore()
 
     private let serviceUUID = CBUUID(string: ATVVProtocol.serviceUUID)
     private let transmitUUID = CBUUID(string: ATVVProtocol.transmitUUID)
@@ -246,66 +231,17 @@ final class XiaomiBluetoothBridge: NSObject {
 
     @discardableResult
     func requestMicrophoneOpen() -> Bool {
-        guard let generation = currentGeneration(),
-              ATVVSessionGate.canOpenMicrophone(
-                  phase: lifecycle,
-                  generation: generation,
-                  capabilitiesConfirmed: capabilitiesConfirmed,
-                  sampleRate: capabilities.sampleRate
-              ),
-              !microphoneOpened,
-              !streaming
-        else {
-            AppLogger.shared.write("ATVV MIC_OPEN host_request_rejected")
-            return false
-        }
-        guard write(ATVVProtocol.microphoneOpen(
-            version: capabilities.version,
-            codec: capabilities.selectedCodec
-        )) else {
-            AppLogger.shared.write("ATVV MIC_OPEN host_request_write_failed")
-            return false
-        }
-        cancelledMicrophoneOpenAt = nil
-        microphoneOpened = true
-        AppLogger.shared.write("ATVV MIC_OPEN host_request")
-        return true
+        session.requestMicrophoneOpen(phase: lifecycle) { self.write($0) }
     }
 
     @discardableResult
     func requestMicrophoneExtend() -> Bool {
-        guard microphoneOpened,
-              streaming,
-              let command = ATVVProtocol.microphoneExtend(
-                  version: capabilities.version,
-                  sessionID: sessionID
-              ),
-              write(command)
-        else {
-            AppLogger.shared.write("ATVV MIC_EXTEND rejected session=\(sessionID)")
-            return false
-        }
-        AppLogger.shared.write("ATVV MIC_EXTEND request session=\(sessionID)")
-        return true
+        session.requestMicrophoneExtend { self.write($0) }
     }
 
     @discardableResult
     func requestMicrophoneClose() -> Bool {
-        guard microphoneOpened || streaming else { return true }
-        let cancelledOpenAt = ATVVSessionGate.cancelledOpenDate(
-            microphoneOpened: microphoneOpened,
-            streaming: streaming
-        )
-        let didWrite = write(ATVVProtocol.microphoneClose(
-            version: capabilities.version,
-            sessionID: sessionID
-        ))
-        microphoneOpened = false
-        cancelledMicrophoneOpenAt = cancelledOpenAt
-        AppLogger.shared.write(
-            "ATVV MIC_CLOSE request session=\(sessionID) written=\(didWrite)"
-        )
-        return didWrite
+        session.requestMicrophoneClose { self.write($0) }
     }
 
     private func discoverOrScan(using central: CBCentralManager, generation: UInt64) {
@@ -379,9 +315,7 @@ final class XiaomiBluetoothBridge: NSObject {
         initializationTimeoutWorkItem?.cancel()
         initializationTimeoutWorkItem = nil
         capabilitiesRequested = false
-        capabilitiesConfirmed = false
-        capabilities = Self.defaultCapabilities
-        resetSession()
+        apply(session.resetForNewConnection())
     }
 
     private func isCurrent(_ candidate: CBPeripheral) -> Bool {
@@ -443,16 +377,7 @@ final class XiaomiBluetoothBridge: NSObject {
     }
 
     private func resetSession() {
-        if streaming {
-            streaming = false
-            delegate?.bluetoothBridgeDidStopVoice(self)
-        }
-        microphoneOpened = false
-        cancelledMicrophoneOpenAt = nil
-        sessionID = 0
-        accumulator.reset()
-        pendingSync = nil
-        decoder.reset()
+        apply(session.reset())
     }
 
     private func scheduleReconnect(discardCachedIdentity: Bool = false) {
@@ -526,182 +451,52 @@ final class XiaomiBluetoothBridge: NSObject {
         AppLogger.shared.write("ATVV CAPABILITIES requested name=\(peripheral.name ?? "MI RC")")
     }
 
-    private func handleControl(_ data: Data) {
-        let bytes = Array(data)
-        guard let opcode = bytes.first,
-              let generation = currentGeneration()
-        else { return }
-
-        switch opcode {
-        case 0x0B:
-            guard lifecycle.acceptsCapabilities(generation: generation) else {
-                AppLogger.shared.write("ATVV CAPS ignored_stale_phase")
-                return
+    /// Performs, in order, what the session core decided.
+    ///
+    /// Order matters and mirrors what shipped before the core was extracted: the delegate
+    /// hears about a stream before the matching log line is written (the delegate logs
+    /// too), and `scheduleReconnect` always comes last so the teardown is visible before
+    /// the connection goes away.
+    private func apply(_ effects: [ATVVVoiceSessionCore.Effect]) {
+        for effect in effects {
+            switch effect {
+            case .voiceDidStart(let sessionID, let implicitFromAudio):
+                delegate?.bluetoothBridgeDidStartVoice(self)
+                AppLogger.shared.write("ATVV STREAM START session=\(sessionID)")
+                if implicitFromAudio {
+                    AppLogger.shared.write("ATVV STREAM implicit_audio_race")
+                }
+            case .voiceDidStop(let sessionID):
+                delegate?.bluetoothBridgeDidStopVoice(self)
+                AppLogger.shared.write("ATVV STREAM STOP session=\(sessionID)")
+            case .voiceDidAbort:
+                delegate?.bluetoothBridgeDidStopVoice(self)
+            case .decoded(let samples):
+                delegate?.bluetoothBridge(self, didDecode: samples)
+            case .capabilitiesAccepted:
+                confirmCapabilities()
+            case .failed(let message):
+                state = .failed(message)
+            case .scheduleReconnect:
+                scheduleReconnect(discardCachedIdentity: true)
             }
-            guard let parsed = ATVVCapabilities.parse(data) else {
-                failInitialization(LocalizedMessage("connection.error.invalid_voice_response"))
-                return
-            }
-            capabilities = parsed
-            AppLogger.shared.write(
-                "ATVV CAPS version=\(parsed.version) codec=\(parsed.selectedCodec) frame=\(parsed.frameSize)"
-            )
-            if !ATVVProtocol.supportsAudio(sampleRate: parsed.sampleRate) {
-                rejectUnsupportedAudio(LocalizedMessage("connection.error.unsupported_16khz_codec"))
-                return
-            }
-            capabilitiesConfirmed = true
-            initializationTimeoutWorkItem?.cancel()
-            initializationTimeoutWorkItem = nil
-            lifecycle = .ready(generation)
-            if let peripheral {
-                state = .ready(peripheral.name ?? "MI RC")
-                AppLogger.shared.write("BLE READY name=\(peripheral.name ?? "MI RC")")
-            }
-        case 0x08:
-            guard requestMicrophoneOpen() else {
-                AppLogger.shared.write("ATVV MIC_OPEN remote_request_ignored")
-                return
-            }
-            AppLogger.shared.write("ATVV MIC_OPEN remote_request")
-        case 0x04:
-            guard ATVVSessionGate.canOpenMicrophone(
-                phase: lifecycle,
-                generation: generation,
-                capabilitiesConfirmed: capabilitiesConfirmed,
-                sampleRate: capabilities.sampleRate
-            ) else {
-                AppLogger.shared.write("ATVV STREAM_START ignored_not_ready")
-                return
-            }
-            if bytes.count >= 3 {
-                let codec = bytes[2]
-                capabilities = ATVVCapabilities(
-                    version: capabilities.version,
-                    codecs: capabilities.codecs,
-                    interaction: bytes[1],
-                    frameSize: capabilities.frameSize,
-                    selectedCodec: codec,
-                    sampleRate: codec == 0x02 ? 16_000 : 8_000
-                )
-            }
-            guard ATVVProtocol.supportsAudio(sampleRate: capabilities.sampleRate) else {
-                rejectUnsupportedAudio(LocalizedMessage("connection.error.unsupported_8khz_codec"))
-                return
-            }
-            let receivedSessionID = bytes.count >= 4 ? bytes[3] : 0
-            if ATVVSessionGate.shouldIgnoreStreamAfterCancelledOpen(
-                cancelledAt: cancelledMicrophoneOpenAt
-            ) {
-                write(ATVVProtocol.microphoneClose(
-                    version: capabilities.version,
-                    sessionID: receivedSessionID
-                ))
-                AppLogger.shared.write(
-                    "ATVV STREAM_START ignored_cancelled session=\(receivedSessionID)"
-                )
-                return
-            }
-            cancelledMicrophoneOpenAt = nil
-            sessionID = receivedSessionID
-            startStreaming()
-        case 0x00:
-            guard lifecycle.acceptsProtocolData(generation: generation) else { return }
-            stopStreaming()
-        case 0x0A:
-            guard lifecycle.acceptsProtocolData(generation: generation) else { return }
-            guard bytes.count >= 7 else { return }
-            let predictorBits = UInt16(bytes[4]) << 8 | UInt16(bytes[5])
-            let predictor = Int(Int16(bitPattern: predictorBits))
-            pendingSync = (predictor, Int(bytes[6]))
-            accumulator.reset()
-        default:
-            break
         }
     }
 
-    private func startStreaming() {
-        accumulator.reset()
-        pendingSync = nil
-        decoder.reset()
-        lastStopAt = nil
-        guard !streaming else { return }
-        streaming = true
-        delegate?.bluetoothBridgeDidStartVoice(self)
-        AppLogger.shared.write("ATVV STREAM START session=\(sessionID)")
-    }
-
-    private func stopStreaming() {
-        guard streaming else { return }
-        streaming = false
-        microphoneOpened = false
-        accumulator.reset()
-        pendingSync = nil
-        lastStopAt = Date()
-        delegate?.bluetoothBridgeDidStopVoice(self)
-        AppLogger.shared.write("ATVV STREAM STOP session=\(sessionID)")
-    }
-
-    private func handleAudio(_ data: Data) {
-        guard let generation = currentGeneration(),
-              ATVVSessionGate.canOpenMicrophone(
-                phase: lifecycle,
-                generation: generation,
-                capabilitiesConfirmed: capabilitiesConfirmed,
-                sampleRate: capabilities.sampleRate
-              )
-        else {
-            AppLogger.shared.write("ATVV AUDIO ignored_not_ready")
-            return
+    private func confirmCapabilities() {
+        guard let generation = currentGeneration() else { return }
+        initializationTimeoutWorkItem?.cancel()
+        initializationTimeoutWorkItem = nil
+        lifecycle = .ready(generation)
+        if let peripheral {
+            state = .ready(peripheral.name ?? "MI RC")
+            AppLogger.shared.write("BLE READY name=\(peripheral.name ?? "MI RC")")
         }
-        if ATVVSessionGate.shouldIgnoreStreamAfterCancelledOpen(
-            cancelledAt: cancelledMicrophoneOpenAt
-        ) {
-            AppLogger.shared.write("ATVV AUDIO ignored_cancelled_open")
-            return
-        }
-        cancelledMicrophoneOpenAt = nil
-        if !streaming {
-            if let lastStopAt, Date().timeIntervalSince(lastStopAt) < 0.3 {
-                return
-            }
-            startStreaming()
-            AppLogger.shared.write("ATVV STREAM implicit_audio_race")
-        }
-
-        let frames = accumulator.append(data, frameSize: capabilities.frameSize)
-        for frame in frames {
-            if let pendingSync {
-                decoder.reset(
-                    predictor: pendingSync.predictor,
-                    stepIndex: pendingSync.stepIndex
-                )
-                self.pendingSync = nil
-            }
-            let decoded = decoder.decode(frame)
-            let samples = PCMPostprocessor.process(decoded, gainDB: settings.gainDB)
-            delegate?.bluetoothBridge(self, didDecode: samples)
-        }
-    }
-
-    private func rejectUnsupportedAudio(_ message: LocalizedMessage) {
-        state = .failed(message)
-        closeMicrophoneIfNeeded()
-        if streaming {
-            stopStreaming()
-        } else {
-            accumulator.reset()
-            pendingSync = nil
-            decoder.reset()
-        }
-        scheduleReconnect(discardCachedIdentity: true)
     }
 
     private func failInitialization(_ message: LocalizedMessage) {
         state = .failed(message)
-        accumulator.reset()
-        pendingSync = nil
-        decoder.reset()
+        session.resetDecodeState()
         scheduleReconnect(discardCachedIdentity: true)
     }
 }
@@ -1069,13 +864,19 @@ extension XiaomiBluetoothBridge {
             return
         }
         if characteristic.uuid == controlUUID {
-            guard lifecycle.acceptsCapabilities(generation: generation) ||
-                    lifecycle.acceptsProtocolData(generation: generation)
-            else { return }
-            handleControl(data)
+            apply(session.handleControlValue(
+                data,
+                phase: lifecycle,
+                callbackGeneration: generation,
+                write: { self.write($0) }
+            ))
         } else if characteristic.uuid == audioUUID {
-            guard lifecycle.acceptsProtocolData(generation: generation) else { return }
-            handleAudio(data)
+            apply(session.handleAudioValue(
+                data,
+                phase: lifecycle,
+                callbackGeneration: generation,
+                gainDB: settings.gainDB
+            ))
         }
     }
 }
