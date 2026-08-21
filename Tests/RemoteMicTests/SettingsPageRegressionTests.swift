@@ -141,12 +141,19 @@ struct SettingsPageRegressionTests {
         ))
         let noInviteBlock = settingsSource[noInvite.lowerBound...]
             .prefix(180)
-        #expect(noInviteBlock.contains(".font(.system(size: 12, weight: .semibold))"))
+        #expect(noInviteBlock.contains(".font(.appCaptionStrong)"))
 
         let statusPill = try #require(settingsSource.range(of: "private struct StatusPill"))
         let statusPillBlock = settingsSource[statusPill.lowerBound...]
             .prefix(420)
-        #expect(statusPillBlock.contains(".font(.system(size: 12, weight: .semibold))"))
+        #expect(statusPillBlock.contains(".font(.appCaptionStrong)"))
+
+        // Naming the token is only half the guarantee; the token itself has to clear the
+        // repository's 12pt floor, and that part is a value rather than a source string.
+        #expect(
+            InterfaceTextStyle.captionStrong.pointSize
+                >= InterfaceTypography.minimumPointSize
+        )
         #expect(appSource.contains("REMOTE_MIC_SETTINGS_SCREENSHOT_DIR"))
         #expect(rendererSource.contains("width >= 800"))
         #expect(rendererSource.contains("height >= 650"))
@@ -191,17 +198,46 @@ struct SettingsPageRegressionTests {
             #expect(!banner.contains(bannedStyle), Comment(rawValue: bannedStyle))
         }
 
-        // Every font must be an explicit size, and no explicit size may be below 12.
-        let sizes = try NSRegularExpression(pattern: #"\.system\(size: (\d+)"#)
+        // Every font in the banner must either name a token from the shared table or be an
+        // explicit size at or above the floor. Counting both and requiring them to account
+        // for every `.font(` is what stops a third, unchecked convention appearing here.
+        let approvedTokens = [
+            ".font(.appCaption)",
+            ".font(.appCaptionMedium)",
+            ".font(.appCaptionStrong)",
+            ".font(.appCaptionHeavy)",
+            ".font(.appBody)",
+            ".font(.appBodyStrong)",
+        ]
         let bannerText = String(banner)
+        let fontCount = bannerText.components(separatedBy: ".font(").count - 1
+        let tokenCount = approvedTokens.reduce(0) { total, token in
+            total + bannerText.components(separatedBy: token).count - 1
+        }
+
+        let sizes = try NSRegularExpression(pattern: #"\.font\(\.system\(\s*size: (\d+)"#)
         let range = NSRange(bannerText.startIndex..., in: bannerText)
         let matches = sizes.matches(in: bannerText, range: range)
-        #expect(matches.count == banner.components(separatedBy: ".font(").count - 1)
-        #expect(!matches.isEmpty)
         for match in matches {
             let digits = try #require(Range(match.range(at: 1), in: bannerText))
             let size = try #require(Int(bannerText[digits]))
             #expect(size >= 12, Comment(rawValue: "font size \(size)"))
+        }
+
+        #expect(fontCount > 0)
+        #expect(tokenCount > 0)
+        #expect(
+            tokenCount + matches.count == fontCount,
+            Comment(rawValue: "\(tokenCount) tokens + \(matches.count) sizes of \(fontCount)")
+        )
+
+        // And the tokens the banner names have to clear the floor, which is a value rather
+        // than something scraped out of a source file.
+        for style in InterfaceTextStyle.allCases {
+            #expect(
+                style.pointSize >= InterfaceTypography.minimumPointSize,
+                Comment(rawValue: "\(style.rawValue) is \(style.pointSize)pt")
+            )
         }
 
         // Inline on the page: a dismissible container would hide the warning after one look.

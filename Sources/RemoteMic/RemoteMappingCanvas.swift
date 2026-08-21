@@ -20,6 +20,19 @@ enum RemoteMappingLayout {
     static let remoteSize = CGSize(width: 202, height: 410)
     static let arrowCardGap: CGFloat = 7
 
+    /// Breathing room kept between a card's inner edge and the remote photo.
+    static let centerChannelGap: CGFloat = 29
+
+    /// Width the two card columns must leave free in the middle of the canvas.
+    ///
+    /// The photo is a fixed `remoteSize` frame pinned to the centre and the cards are drawn
+    /// after it in the `ZStack`, so any width the cards take beyond this channel does not
+    /// squeeze the illustration — it covers it.
+    static let centerChannelWidth: CGFloat = remoteSize.width + centerChannelGap * 2
+
+    /// Width a card is given when the canvas is wide enough to afford it.
+    static let preferredCardWidth: CGFloat = 300
+
     static let buttonPlacements: [RemoteMappingPlacement] = [
         RemoteMappingPlacement(button: .power, side: .left, anchor: UnitPoint(x: 0.386, y: 0.099), targetY: 0.08),
         RemoteMappingPlacement(button: .up, side: .left, anchor: UnitPoint(x: 0.502, y: 0.179), targetY: 0.23),
@@ -61,8 +74,21 @@ enum RemoteMappingLayout {
         )
     }
 
+    /// Cards may only use the width left over once the centre channel is reserved.
+    ///
+    /// The previous formula floored this at 270pt, which outranked the channel and let the
+    /// two columns slide over the centred photo as soon as the canvas fell below 742pt.
+    /// Narrow windows now shrink the cards instead; their labels already truncate.
     static func cardWidth(for canvasWidth: CGFloat) -> CGFloat {
-        min(300, max(270, (canvasWidth - 260) / 2))
+        let widthAvailableForEachCard = max(0, canvasWidth - centerChannelWidth) / 2
+        return min(preferredCardWidth, widthAvailableForEachCard)
+    }
+
+    /// Horizontal distance between a card's inner edge and the nearest edge of the remote
+    /// photo. Negative means the cards are painting over the illustration.
+    static func cardToRemoteClearance(for canvasWidth: CGFloat) -> CGFloat {
+        let remoteLeadingEdge = canvasWidth / 2 - remoteSize.width / 2
+        return remoteLeadingEdge - cardWidth(for: canvasWidth)
     }
 
     static func connectionControlPoints(
@@ -208,7 +234,7 @@ struct RemoteMappingCanvas: View {
                 Image(systemName: symbol(for: button))
                     .frame(width: 14)
                 Text(button.displayName(using: localization))
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.appBodyStrong)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
@@ -221,7 +247,7 @@ struct RemoteMappingCanvas: View {
                     } label: {
                         VStack(spacing: 1) {
                             Text(trigger.displayName(using: localization))
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.appCaptionMedium)
                                 .foregroundStyle(.secondary)
                             Text(actionSummary(button, trigger))
                                 .font(.system(size: 12, weight: trigger == .singleClick ? .semibold : .regular))
@@ -271,10 +297,10 @@ struct RemoteMappingCanvas: View {
                 Image(systemName: "mic.fill")
                     .frame(width: 14)
                 Text("button_mapping.voice_button.title")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.appBodyStrong)
                 Spacer(minLength: 0)
                 Text(LocalizedStringKey(voiceTrigger.titleKey))
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.appCaptionStrong)
                     .foregroundStyle(voiceActive ? Color.orange : Color.secondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -284,7 +310,7 @@ struct RemoteMappingCanvas: View {
                     )
             }
             Text("button_mapping.voice_button.detail")
-                .font(.system(size: 12))
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
         }
@@ -374,7 +400,7 @@ private struct MappingRemotePhoto: View {
                     .fill(.quaternary)
                     .overlay {
                         Text("remote.photo.missing")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.secondary)
                     }
             }

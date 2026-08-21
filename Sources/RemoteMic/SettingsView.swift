@@ -419,12 +419,12 @@ struct SettingsView: View {
 
                     VStack(alignment: .leading, spacing: 5) {
                         Text("connection.web.invite.ios_eyebrow")
-                            .font(.caption.weight(.bold))
+                            .font(.appCaptionHeavy)
                             .foregroundStyle(Color.accentColor)
                         Text("connection.web.invite.ios_title")
                             .font(.title3.weight(.semibold))
                         Text("connection.web.invite.ios_description")
-                            .font(.subheadline)
+                            .font(.appBody)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -467,7 +467,7 @@ struct SettingsView: View {
                 Text("connection.web.invite.title")
                     .font(.headline)
                 Text("connection.web.invite.description")
-                    .font(.subheadline)
+                    .font(.appBody)
                     .foregroundStyle(.secondary)
             }
 
@@ -538,10 +538,10 @@ struct SettingsView: View {
                     .font(.system(size: 21, weight: .semibold))
                 if section == .privateFeature || section == .macros {
                     Text(sectionTitle(section))
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.appBodyStrong)
                 } else {
                     Text(section.title)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.appBodyStrong)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -648,13 +648,13 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 6) {
                                 Text("connection.phone.ios_title")
-                                    .font(.subheadline.weight(.semibold))
+                                    .font(.appBodyStrong)
                                 Text("connection.phone.no_invite_badge")
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.appCaptionStrong)
                                     .foregroundStyle(.secondary)
                             }
                             Text("connection.phone.ios_help")
-                                .font(.caption)
+                                .font(.appCaption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -720,9 +720,9 @@ struct SettingsView: View {
 
                     VStack(alignment: .leading, spacing: 3) {
                         Text("connection.watch.title")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.appBodyStrong)
                         Text("connection.watch.help")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -764,15 +764,15 @@ struct SettingsView: View {
 
                     VStack(alignment: .leading, spacing: 3) {
                         Text("connection.web.title")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.appBodyStrong)
                         Text("connection.web.help_short")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.secondary)
                     }
 
                     Spacer(minLength: 8)
                     Text(webRemoteStatusText)
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(webRemoteStatusTint)
                         .lineLimit(1)
                     Button(
@@ -795,7 +795,7 @@ struct SettingsView: View {
                         ).text(using: localization),
                         systemImage: "checkmark.shield"
                     )
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                     Spacer()
                     Button("connection.trusted_devices.clear") {
@@ -858,7 +858,7 @@ struct SettingsView: View {
                 .foregroundStyle(tint)
                 .frame(width: 18)
             Text(text)
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -904,7 +904,7 @@ struct SettingsView: View {
                     }
 
                     Text("audio.gain.help")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                         .padding(.leading, 106)
                         .fixedSize(horizontal: false, vertical: true)
@@ -934,12 +934,12 @@ struct SettingsView: View {
                 }
 
                 Text("audio.output.privacy_help")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
 
                 HStack {
                     Text(model.testToneStatus.text(using: localization))
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                     Spacer()
                 }
@@ -955,12 +955,12 @@ struct SettingsView: View {
                         Text("audio.compatibility.section_title")
                             .font(.headline)
                         Text("audio.compatibility.microphone_label")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 16)
                     Text(model.doubaoAudioStatus.text(using: localization))
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(model.hasDoubaoAudioDevice ? .green : .orange)
                         .multilineTextAlignment(.trailing)
                 }
@@ -976,7 +976,7 @@ struct SettingsView: View {
                 }
 
                 Text("audio.compatibility.help_plain")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1075,14 +1075,14 @@ struct SettingsView: View {
                         .frame(width: 22)
                     VStack(alignment: .leading, spacing: 5) {
                         Text(localization.text(CorruptedSettingsNotice.titleKey))
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appBodyStrong)
                         Text(summary)
-                            .font(.system(size: 12))
+                            .font(.appCaption)
                         Text(localization.text(CorruptedSettingsNotice.recoveryKey))
-                            .font(.system(size: 12))
+                            .font(.appCaption)
                             .foregroundStyle(.secondary)
                         Text(localization.text(CorruptedSettingsNotice.nextStepKey))
-                            .font(.system(size: 12))
+                            .font(.appCaption)
                             .foregroundStyle(.secondary)
                     }
                     .fixedSize(horizontal: false, vertical: true)
@@ -1115,17 +1115,17 @@ struct SettingsView: View {
                         .frame(width: 22)
                     VStack(alignment: .leading, spacing: 5) {
                         Text(localization.text(CorruptedSettingsNotice.importTitleKey))
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appBodyStrong)
                         if let rejected {
                             Text(rejected)
-                                .font(.system(size: 12))
+                                .font(.appCaption)
                             Text(localization.text(CorruptedSettingsNotice.importNextStepKey))
-                                .font(.system(size: 12))
+                                .font(.appCaption)
                                 .foregroundStyle(.secondary)
                         }
                         if let missing {
                             Text(missing)
-                                .font(.system(size: 12))
+                                .font(.appCaption)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -1201,13 +1201,13 @@ struct SettingsView: View {
                     Image(systemName: "mic.fill")
                         .frame(width: 14)
                     Text("button_mapping.voice_trigger.title")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.appBodyStrong)
                 }
                 Toggle("button_mapping.voice_trigger.use_remote_mic", isOn: Binding(
                     get: { settings.voiceKeyUsesRemoteMicrophone },
                     set: { model.setVoiceKeyUsesRemoteMicrophone($0) }
                 ))
-                .font(.system(size: 12, weight: .medium))
+                .font(.appCaptionMedium)
                 .toggleStyle(.switch)
                 Picker("button_mapping.voice_trigger.title", selection: Binding(
                     get: { settings.voiceTriggerKey },
@@ -1224,7 +1224,7 @@ struct SettingsView: View {
                         ? "button_mapping.voice_trigger.mode_hint_on"
                         : "button_mapping.voice_trigger.mode_hint_off"
                 ))
-                .font(.system(size: 12))
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
@@ -1239,7 +1239,7 @@ struct SettingsView: View {
                     model.hidStatus.text(using: localization),
                     systemImage: "keyboard"
                 )
-                .font(.system(size: 12))
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
 
@@ -1247,10 +1247,10 @@ struct SettingsView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Toggle("button_mapping.selection_lock", isOn: $isMappingSelectionLocked)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.appCaptionMedium)
                         .toggleStyle(.switch)
                     Text("button_mapping.selection_lock_hint_short")
-                        .font(.system(size: 12))
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -1263,11 +1263,11 @@ struct SettingsView: View {
                         get: { settings.voiceFnTapModeEnabled },
                         set: { model.setVoiceFnTapModeEnabled($0) }
                     ))
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.appCaptionMedium)
                     .toggleStyle(.switch)
                     .disabled(!settings.voiceKeyUsesRemoteMicrophone)
                     Text("connection.voice_fn_tap.hint_short")
-                        .font(.system(size: 12))
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -1314,7 +1314,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     Text(remoteDisplayName(profile))
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.appBodyStrong)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     if selected {
@@ -1341,7 +1341,7 @@ struct SettingsView: View {
                         }
                     }
                 }
-                .font(.system(size: 12))
+                .font(.appCaption)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
@@ -1493,19 +1493,19 @@ struct SettingsView: View {
 
             if button == .power && trigger == .singleClick && settings.experimentalContinuousRecordingEnabled {
                 Text("button_mapping.continuous_recording_experiment.power_managed")
-                    .font(.system(size: 12))
+                    .font(.appCaption)
                     .foregroundStyle(.orange)
             } else if trigger == .doubleClick && configured.action != .disabled {
                 Text("button_mapping.double_click.effect")
-                    .font(.system(size: 12))
+                    .font(.appCaption)
                     .foregroundStyle(.orange)
             } else if trigger == .longPress && configured.action != .disabled {
                 Text("button_mapping.long_press.effect")
-                    .font(.system(size: 12))
+                    .font(.appCaption)
                     .foregroundStyle(.orange)
             } else if trigger == .singleClick {
                 Text("button_mapping.single_click.help")
-                    .font(.system(size: 12))
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -1620,13 +1620,13 @@ struct SettingsView: View {
         let contextID = target.id
         VStack(alignment: .leading, spacing: 10) {
             Text("shortcut.editor.click_first_help")
-                .font(.system(size: 12))
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
 
             if shortcutCaptureTarget == target {
                 HStack(spacing: 10) {
                     Label("shortcut.editor.recording_prompt", systemImage: "keyboard.fill")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.appBodyStrong)
                         .foregroundStyle(Color.accentColor)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -1730,7 +1730,7 @@ struct SettingsView: View {
                     chooseCustomApplication(for: button, trigger: trigger)
                 } label: {
                     Label("custom_application.add", systemImage: "plus")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.appBodyStrong)
                         .frame(maxWidth: .infinity, minHeight: 36)
                 }
                 .compatibilityButtonStyle(.standard)
@@ -1797,7 +1797,7 @@ struct SettingsView: View {
                 }
             } else {
                 Text("custom_application.not_configured")
-                    .font(.system(size: 12))
+                    .font(.appCaption)
                     .foregroundStyle(.orange)
             }
         }
@@ -1839,13 +1839,13 @@ struct SettingsView: View {
         let contextID = "application-\(profile.id.uuidString)"
         VStack(alignment: .leading, spacing: 10) {
             Text("custom_application.shortcut.editor_instructions")
-                .font(.system(size: 12))
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
 
             if applicationShortcutCaptureProfileID == profile.id {
                 HStack(spacing: 10) {
                     Label("shortcut.editor.recording_prompt", systemImage: "keyboard.fill")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.appBodyStrong)
                         .foregroundStyle(Color.accentColor)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -1930,16 +1930,16 @@ struct SettingsView: View {
             switch result {
             case .succeeded:
                 Label("shortcut.editor.success", systemImage: "checkmark.circle.fill")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.appCaptionStrong)
                     .foregroundStyle(.green)
             case .failed(.accessibilityPermissionRequired):
                 Label("shortcut.editor.permission_required", systemImage: "lock.trianglebadge.exclamationmark")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.appCaptionStrong)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             case .failed(.eventTapUnavailable):
                 Label("shortcut.editor.capture_unavailable", systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.appCaptionStrong)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1950,7 +1950,7 @@ struct SettingsView: View {
     private func accessibilityLearningEditor(_ profile: CustomApplicationProfile) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("custom_application.accessibility.learn_help")
-                .font(.system(size: 12))
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -1966,7 +1966,7 @@ struct SettingsView: View {
                         ? localization.text("custom_application.accessibility.not_recorded")
                         : localization.text("custom_application.accessibility.recorded")
                 )
-                .font(.system(size: 12, weight: .medium))
+                .font(.appCaptionMedium)
                 .foregroundStyle(profile.accessibilityTarget == nil ? Color.orange : Color.green)
             }
 
@@ -1975,7 +1975,7 @@ struct SettingsView: View {
                     localization.text(learningState.messageKey),
                     systemImage: learningState.systemImage
                 )
-                .font(.system(size: 12, weight: .medium))
+                .font(.appCaptionMedium)
                 .foregroundStyle(learningState.tint)
                 .fixedSize(horizontal: false, vertical: true)
             }
@@ -2158,7 +2158,7 @@ struct SettingsView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("diagnostics.logs.title")
                                 Text("diagnostics.logs.privacy")
-                                    .font(.caption)
+                                    .font(.appCaption)
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -2238,7 +2238,7 @@ struct SettingsView: View {
                         Text("statistics.voice_ranking.title")
                             .font(.headline)
                         Text("statistics.voice_ranking.description")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -2270,7 +2270,7 @@ struct SettingsView: View {
                                 Spacer(minLength: 12)
 
                                 Text(voiceSessionDateText(record.endedAt))
-                                    .font(.caption)
+                                    .font(.appCaption)
                                     .foregroundStyle(.secondary)
                             }
                             .padding(.vertical, 9)
@@ -2365,7 +2365,7 @@ struct SettingsView: View {
                             Text("app.name")
                                 .font(.system(size: 28, weight: .semibold))
                             Text("about.page.hero_description")
-                                .font(.subheadline)
+                                .font(.appBody)
                                 .foregroundStyle(.secondary)
                         }
 
@@ -2394,7 +2394,7 @@ struct SettingsView: View {
 
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text("about.version.current")
-                                            .font(.subheadline)
+                                            .font(.appBody)
                                             .foregroundStyle(.secondary)
                                         Button(action: revealPrivateEnrollmentIfNeeded) {
                                             Text(currentVersion)
@@ -2409,7 +2409,7 @@ struct SettingsView: View {
                                         HStack(spacing: 8) {
                                             VStack(alignment: .leading, spacing: 4) {
                                                 Text("about.version.latest")
-                                                    .font(.subheadline)
+                                                    .font(.appBody)
                                                     .foregroundStyle(.secondary)
                                                 Text(update.displayVersion)
                                                     .font(.system(size: 28, weight: .semibold))
@@ -2486,7 +2486,7 @@ struct SettingsView: View {
                                     )
                                     .toggleStyle(.switch)
                                     Text("about.version.check_prerelease_help_short")
-                                        .font(.caption)
+                                        .font(.appCaption)
                                         .foregroundStyle(.secondary)
                                 }
                             }
@@ -2510,9 +2510,9 @@ struct SettingsView: View {
                                     .frame(width: 34)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("about.configuration.export")
-                                        .font(.subheadline.weight(.semibold))
+                                        .font(.appBodyStrong)
                                     Text("about.configuration.export_description")
-                                        .font(.caption)
+                                        .font(.appCaption)
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
@@ -2531,9 +2531,9 @@ struct SettingsView: View {
                                     .frame(width: 34)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("about.configuration.import")
-                                        .font(.subheadline.weight(.semibold))
+                                        .font(.appBodyStrong)
                                     Text("about.configuration.import_description")
-                                        .font(.caption)
+                                        .font(.appCaption)
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
@@ -2549,7 +2549,7 @@ struct SettingsView: View {
                                     configurationStatus.message.text(using: localization),
                                     systemImage: configurationStatus.systemImage
                                 )
-                                .font(.caption)
+                                .font(.appCaption)
                                 .foregroundStyle(configurationStatus.tint)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.vertical, 8)
@@ -2564,9 +2564,9 @@ struct SettingsView: View {
                                     .frame(width: 34)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("about.preferences.show_dock_icon")
-                                        .font(.subheadline.weight(.semibold))
+                                        .font(.appBodyStrong)
                                     Text("about.preferences.show_dock_icon_help")
-                                        .font(.caption)
+                                        .font(.appCaption)
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
@@ -2588,9 +2588,9 @@ struct SettingsView: View {
                                     .frame(width: 34)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("about.preferences.open_main_window_at_launch")
-                                        .font(.subheadline.weight(.semibold))
+                                        .font(.appBodyStrong)
                                     Text("about.preferences.open_main_window_help")
-                                        .font(.caption)
+                                        .font(.appCaption)
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
@@ -2609,9 +2609,9 @@ struct SettingsView: View {
                                     .frame(width: 34)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("about.preferences.language")
-                                        .font(.subheadline.weight(.semibold))
+                                        .font(.appBodyStrong)
                                     Text("about.preferences.language_description")
-                                        .font(.caption)
+                                        .font(.appCaption)
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer(minLength: 20)
@@ -2638,9 +2638,9 @@ struct SettingsView: View {
                                     .frame(width: 34)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("about.preferences.restart_onboarding")
-                                        .font(.subheadline.weight(.semibold))
+                                        .font(.appBodyStrong)
                                     Text("about.preferences.restart_onboarding_help")
-                                        .font(.system(size: 12))
+                                        .font(.appCaption)
                                         .foregroundStyle(.secondary)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
@@ -2687,7 +2687,7 @@ struct SettingsView: View {
             Text("about.version.information_title")
                 .font(.headline)
             Text("about.version.information_idle")
-                .font(.subheadline)
+                .font(.appBody)
                 .foregroundStyle(.secondary)
         case .checking:
             Text("about.version.information_title")
@@ -2696,7 +2696,7 @@ struct SettingsView: View {
                 ProgressView()
                     .controlSize(.small)
                 Text("about.version.checking")
-                    .font(.subheadline)
+                    .font(.appBody)
                     .foregroundStyle(.secondary)
             }
         case .upToDate:
@@ -2704,14 +2704,14 @@ struct SettingsView: View {
                 .font(.headline)
                 .foregroundStyle(.green)
             Text("about.version.up_to_date_description")
-                .font(.subheadline)
+                .font(.appBody)
                 .foregroundStyle(.secondary)
         case .unavailable:
             Label("about.version.information_unavailable", systemImage: "wifi.exclamationmark")
                 .font(.headline)
                 .foregroundStyle(.orange)
             Text("about.version.information_unavailable_description")
-                .font(.subheadline)
+                .font(.appBody)
                 .foregroundStyle(.secondary)
         case let .available(update):
             Text(String(
@@ -2723,18 +2723,18 @@ struct SettingsView: View {
 
             if update.releaseNotes.isEmpty {
                 Text("about.version.release_notes_unavailable")
-                    .font(.subheadline)
+                    .font(.appBody)
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(Array(update.releaseNotes.enumerated()), id: \.offset) { index, note in
                     HStack(alignment: .top, spacing: 10) {
                         Text("\(index + 1)")
-                            .font(.caption.weight(.bold))
+                            .font(.appCaptionHeavy)
                             .foregroundStyle(Color.accentColor)
                             .frame(width: 24, height: 24)
                             .background(Color.accentColor.opacity(0.13), in: Circle())
                         Text(note)
-                            .font(.subheadline)
+                            .font(.appBody)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -2984,7 +2984,7 @@ struct SettingsView: View {
     ) -> some View {
         HStack(spacing: 14) {
             Text("\(index)")
-                .font(.caption.weight(.bold))
+                .font(.appCaptionHeavy)
                 .foregroundStyle(.white)
                 .frame(width: 22, height: 22)
                 .background(Color.accentColor, in: Circle())
@@ -3002,7 +3002,7 @@ struct SettingsView: View {
                 Text(title)
                     .font(.headline)
                 Text(detail)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -3565,12 +3565,16 @@ private struct UsageStatisticCard: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                 Text(value)
-                    .font(.system(size: 21, weight: .semibold, design: .rounded))
+                    .font(.system(
+                        size: InterfaceTypography.shrinkableValuePointSize,
+                        weight: .semibold,
+                        design: .rounded
+                    ))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.75)
+                    .minimumScaleFactor(InterfaceTypography.shrinkableValueMinimumScaleFactor)
             }
 
             Spacer(minLength: 8)
@@ -3639,7 +3643,7 @@ private struct UsageBarChart: View {
                         Text(title)
                             .font(.headline)
                         Text(subtitle)
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -3653,7 +3657,7 @@ private struct UsageBarChart: View {
                     .cornerRadius(5)
                     .annotation(position: .top, spacing: 4) {
                         Text(metric.label(for: point))
-                            .font(.caption2.weight(.medium))
+                            .font(.appCaptionMedium)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
@@ -3697,7 +3701,7 @@ private struct StatusPill: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 12, weight: .semibold))
+            .font(.appCaptionStrong)
             .foregroundStyle(tint)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
@@ -3715,19 +3719,19 @@ private struct DeviceStatusStep: View {
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
             Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.appBodyStrong)
                 .foregroundStyle(tint)
                 .frame(width: 28, height: 28)
                 .compatibilityTintedGlass(tint: tint.opacity(0.14), in: Circle())
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(title)
-                        .font(.caption.weight(.semibold))
+                        .font(.appCaptionStrong)
                     Spacer(minLength: 4)
                     StatusPill(text: badge, tint: tint)
                 }
                 Text(detail)
-                    .font(.system(size: 10))
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -3757,7 +3761,7 @@ private struct RC003Photo: View {
                     .fill(.quaternary)
                     .overlay {
                         Text("remote.photo.missing")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.secondary)
                     }
             }

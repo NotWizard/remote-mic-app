@@ -138,6 +138,67 @@ struct LocalizationTests {
         }
     }
 
+    /// The connection approval alerts are `NSAlert`s, so they resolve their copy at runtime
+    /// through `LocalizationStore`. A missing key does not crash there — `text(_:)` hands back
+    /// the identifier — so the user is shown something like `connection.approval.deny` on a
+    /// button. The key-set parity check above cannot catch that on its own, because it only
+    /// compares the two files against each other: a key absent from *both* passes.
+    ///
+    /// This walks the keys the alerts actually ask for, which is why they are declared in one
+    /// list on `ConnectionApprovalAlertText` rather than inline at each assignment.
+    @Test func connectionApprovalAlertsResolveEveryKeyInBothLanguages() throws {
+        let referencedKeys = BridgeAppModel.ConnectionApprovalAlertText.referencedKeys
+        #expect(!referencedKeys.isEmpty)
+        #expect(Set(referencedKeys).count == referencedKeys.count)
+
+        // Arguments each call site passes, so a template with the wrong arity is caught here
+        // rather than printing a stray placeholder into a security prompt.
+        let expectedPlaceholderCounts = [
+            "connection.approval.nearby.title": 1,
+            "connection.approval.watch.detail": 0,
+            "connection.approval.phone.detail": 0,
+            "connection.approval.web.title": 1,
+            "connection.approval.web.detail": 0,
+            "connection.web.pairing_code_accessibility": 1,
+            "connection.approval.allow": 0,
+            "connection.approval.deny": 0,
+            "connection.phone.cancel_waiting": 0,
+        ]
+        #expect(Set(expectedPlaceholderCounts.keys) == Set(referencedKeys))
+
+        for directory in try sourceLocalizationDirectories() {
+            let localized = try strings(
+                at: directory.appendingPathComponent("Localizable.strings")
+            )
+            let language = directory.lastPathComponent
+
+            for key in referencedKeys {
+                let value = try #require(
+                    localized[key],
+                    Comment(rawValue: "\(language) is missing \(key)")
+                )
+                #expect(!value.isEmpty, Comment(rawValue: "\(language) \(key)"))
+                #expect(value != key, Comment(rawValue: "\(language) \(key)"))
+                #expect(
+                    formatPlaceholders(in: value).count == expectedPlaceholderCounts[key],
+                    Comment(rawValue: "\(language) \(key) placeholder arity")
+                )
+            }
+
+            // The defect these keys replaced was hard-coded Chinese reaching English users,
+            // so an English file that merely copies the Chinese would not be a fix.
+            if language == "en.lproj" {
+                for key in referencedKeys {
+                    let value = try #require(localized[key])
+                    #expect(
+                        !containsCJKText(value),
+                        Comment(rawValue: "en \(key) still contains Chinese")
+                    )
+                }
+            }
+        }
+    }
+
     @Test func glossaryResourcesContainTheDocumentedTechnicalTerms() throws {
         for localization in ["en", "zh-Hans"] {
             let glossaryURL = repositoryRoot
@@ -234,4 +295,14 @@ private func containsRestrictedUserTerm(_ value: String) -> Bool {
         of: #"RC003|ATVV|\bHID\b|\bUUID\b|virtual[ -]transport"#,
         options: [.regularExpression, .caseInsensitive]
     ) != nil
+}
+
+/// CJK unified ideographs. Used to prove an English value is really English rather than a
+/// copy of the Chinese wording, which is the failure the approval alerts shipped with.
+private func containsCJKText(_ value: String) -> Bool {
+    value.unicodeScalars.contains { scalar in
+        (0x4E00...0x9FFF).contains(scalar.value)
+            || (0x3400...0x4DBF).contains(scalar.value)
+            || (0x3000...0x303F).contains(scalar.value)
+    }
 }

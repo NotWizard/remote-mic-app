@@ -1,5 +1,7 @@
 # Bug 记录
 
+- [承重最重的蓝牙桥没有任何行为测试覆盖](./2026-08-21-bluetooth-bridge-had-no-behaviour-coverage.md)
+- [界面违反本仓库自己写下的字号与本地化规则](./2026-08-21-interface-breaks-the-projects-own-font-and-locale-rules.md)
 - [导入配置几乎不校验，可为按键装上任意应用与快捷键触发器](./2026-08-21-configuration-import-accepts-arbitrary-app-and-shortcut.md)
 - [排空尾音期间音频重配置导致语音会话永久卡死](./2026-08-21-voice-session-wedges-when-audio-reconfigures-mid-drain.md)
 - [遥控器不在范围内时每小时 317 次蓝牙重连](./2026-08-21-bluetooth-reconnect-storm-when-remote-absent.md)
@@ -42,6 +44,8 @@
 
 | 时间 | Bug | 状态 |
 | --- | --- | --- |
+| 2026-08-21 | [承重最重的蓝牙桥没有任何行为测试覆盖](./2026-08-21-bluetooth-bridge-had-no-behaviour-coverage.md) | 已提取纯事件核心并补 11 项回放测试，三项优先用例均通过定向负向对照；**回放事件不等于真实 CoreBluetooth 回调，RC003 真机基线未验收**；源码文本断言 620 项中转换 1 项 |
+| 2026-08-21 | [界面违反本仓库自己写下的字号与本地化规则](./2026-08-21-interface-breaks-the-projects-own-font-and-locale-rules.md) | 字号、弹窗本地化与映射页布局已修复，自动化通过；**未做任何真实窗口渲染验收**；`minSize` 与 `800 × 650` 门禁矛盾仅出结论未实施 |
 | 2026-08-21 | [导入配置几乎不校验，可为按键装上任意应用与快捷键触发器](./2026-08-21-configuration-import-accepts-arbitrary-app-and-shortcut.md) | 已修复，自动化通过；真机与真实第三方 APP 未验收 |
 | 2026-08-21 | [排空尾音期间音频重配置导致语音会话永久卡死](./2026-08-21-voice-session-wedges-when-audio-reconfigures-mid-drain.md) | 已修复，自动化通过；真机与真实音频设备切换验收未完成 |
 | 2026-08-18 | [Apple Watch BLE 语音已启动但没有有效电平](./2026-08-18-watch-ble-audio-no-signal.md) | 诊断修复完成，等待真机验收 |

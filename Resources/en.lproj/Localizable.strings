@@ -232,6 +232,13 @@
 "connection.watch.connected" = "Connected";
 "connection.watch.disconnect" = "Disconnect";
 "connection.watch.cancel_waiting" = "Stop Waiting";
+"connection.approval.nearby.title" = "Allow “%1$@” to connect to SayAll?";
+"connection.approval.watch.detail" = "This Apple Watch will talk to SayAll and send button presses and microphone audio in place of the physical remote. Check that the 2-digit code shown on the Apple Watch matches the one below. Allowing it makes this install a trusted device.";
+"connection.approval.phone.detail" = "This iPhone will talk to SayAll and send button presses and microphone audio in place of the physical remote. Check that the 2-digit code shown on the iPhone matches the one below. Allowing it makes this install a trusted device.";
+"connection.approval.web.title" = "Allow “%1$@” to connect to the Mobile Web Remote?";
+"connection.approval.web.detail" = "The phone browser will control SayAll through a one-time session. Check that the 4-digit code shown on the phone matches the one below. This approval is not saved as a long-term trusted device.";
+"connection.approval.allow" = "Allow Connection";
+"connection.approval.deny" = "Deny";
 "connection.trusted_devices.clear" = "Clear Trusted Devices";
 "connection.trusted_devices.clear_confirm.title" = "Clear All Trusted Devices?";
 "connection.trusted_devices.clear_confirm.message" = "The current connection stays active. Approval is required again the next time a phone connects.";

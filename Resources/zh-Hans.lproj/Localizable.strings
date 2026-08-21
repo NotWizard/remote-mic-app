@@ -232,6 +232,13 @@
 "connection.watch.connected" = "已连接";
 "connection.watch.disconnect" = "取消连接";
 "connection.watch.cancel_waiting" = "取消等待";
+"connection.approval.nearby.title" = "允许“%1$@”连接无线麦？";
+"connection.approval.watch.detail" = "这块 Apple Watch 将与无线麦通信，代替实体遥控器发送按键和麦克风声音。请确认 Apple Watch 上显示的 2 位校验码与下方一致。允许后，本次安装会成为受信任设备。";
+"connection.approval.phone.detail" = "这台 iPhone 将与无线麦通信，代替实体遥控器发送按键和麦克风声音。请确认 iPhone 上显示的 2 位校验码与下方一致。允许后，本次安装会成为受信任设备。";
+"connection.approval.web.title" = "允许“%1$@”连接网页版？";
+"connection.approval.web.detail" = "手机浏览器将通过一次性会话控制无线麦。请确认手机上显示的 4 位校验码与下方一致。本次允许不会保存为长期受信任设备。";
+"connection.approval.allow" = "允许连接";
+"connection.approval.deny" = "拒绝";
 "connection.trusted_devices.clear" = "清除受信任设备";
 "connection.trusted_devices.clear_confirm.title" = "清除所有受信任设备？";
 "connection.trusted_devices.clear_confirm.message" = "当前连接不会中断，下次连接时需要重新确认授权。";
