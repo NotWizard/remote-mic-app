@@ -18,6 +18,48 @@ private enum MobileVoiceSource {
     }
 }
 
+/// Decides whether releasing the virtual audio output would change anything.
+///
+/// A resident menu-bar install produced 30880 `AUDIO RELEASE completed` diagnostic lines
+/// in 11 days, of which 30878 released nothing: every bluetooth reconnect attempt drives
+/// two connection-state transitions, and each one asked for a release even though the
+/// engine had already been torn down.
+enum VirtualAudioReleaseGate {
+    /// The in-memory half of the decision: every observable effect of a release has
+    /// already happened.
+    static func teardownAlreadyComplete(
+        engineHoldsDevice: Bool,
+        pendingVoiceBufferCount: Int,
+        publishedAudioReady: Bool,
+        publishedStatusAlreadyReleased: Bool
+    ) -> Bool {
+        !engineHoldsDevice
+            && pendingVoiceBufferCount == 0
+            && !publishedAudioReady
+            && publishedStatusAlreadyReleased
+    }
+
+    /// Full decision. `defaultInputFallbackWouldRun` is only consulted once the cheap
+    /// facts hold, so the CoreAudio probe behind it stays off the hot path. Returning
+    /// `false` whenever any cleanup could still be pending keeps the gate conservative:
+    /// it never trades correctness for quieter logs.
+    static func hasNothingToRelease(
+        engineHoldsDevice: Bool,
+        pendingVoiceBufferCount: Int,
+        publishedAudioReady: Bool,
+        publishedStatusAlreadyReleased: Bool,
+        defaultInputFallbackWouldRun: () -> Bool
+    ) -> Bool {
+        guard teardownAlreadyComplete(
+            engineHoldsDevice: engineHoldsDevice,
+            pendingVoiceBufferCount: pendingVoiceBufferCount,
+            publishedAudioReady: publishedAudioReady,
+            publishedStatusAlreadyReleased: publishedStatusAlreadyReleased
+        ) else { return false }
+        return !defaultInputFallbackWouldRun()
+    }
+}
+
 private struct MobileButtonGestureKey: Hashable {
     let source: UsageEventSource
     let button: RemoteButton
@@ -2071,11 +2113,43 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         return !selectedUID.isEmpty && audioDevices.contains { $0.uid == selectedUID }
     }
 
+    /// Mirrors the guards inside `switchDefaultInputToFallbackIfNeeded`, so the release
+    /// gate can tell whether skipping that call would drop real cleanup work.
+    private var defaultInputFallbackWouldRun: Bool {
+        guard managedDefaultInputTransition == nil else { return false }
+        let selectedUID = settings.selectedAudioDeviceUID
+        guard !selectedUID.isEmpty else { return false }
+        return CoreAudioDeviceCatalog.defaultInputDevice()?.uid == selectedUID
+    }
+
+    /// True when every effect of a release has already happened. The cheap in-memory
+    /// facts are evaluated first: in the pathological bluetooth reconnect loop they all
+    /// hold, so at most one CoreAudio property read happens per call instead of the ~9
+    /// that `diagnosticState()` performs for the diagnostic line.
+    private var virtualAudioReleaseHasNothingToDo: Bool {
+        VirtualAudioReleaseGate.hasNothingToRelease(
+            engineHoldsDevice: audioOutput.selectedDevice != nil,
+            pendingVoiceBufferCount: audioOutput.pendingVoiceBufferCountForDiagnostics,
+            publishedAudioReady: isAudioOutputReady,
+            publishedStatusAlreadyReleased: testToneStatus == Self.releasedTestToneStatus,
+            defaultInputFallbackWouldRun: { [self] in defaultInputFallbackWouldRun }
+        )
+    }
+
+    private static let releasedTestToneStatus = LocalizedMessage("audio.output.none_or_unavailable")
+
     private func releaseVirtualAudioOutputIfUnused(reason: String) {
         guard !shouldKeepVirtualAudioActive else {
-            AppLogger.shared.write("AUDIO RELEASE skipped reason=\(reason) still_required=true")
+            AppLogger.shared.write(
+                "AUDIO RELEASE skipped reason=\(reason) still_required=true",
+                foldKey: "AUDIO RELEASE skipped reason=\(reason)"
+            )
             return
         }
+        // Idempotence gate: the engine is already gone, nothing is queued, the published
+        // state already reflects a released output and the default-input fallback would
+        // be a no-op. Running the teardown again would only emit the diagnostic line.
+        guard !virtualAudioReleaseHasNothingToDo else { return }
         virtualAudioReleaseGeneration &+= 1
         let generation = virtualAudioReleaseGeneration
         switchDefaultInputToFallbackIfNeeded(reason: reason)
@@ -2086,9 +2160,10 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
             else { return }
             self.audioOutput.stop()
             self.isAudioOutputReady = false
-            self.testToneStatus = LocalizedMessage("audio.output.none_or_unavailable")
+            self.testToneStatus = Self.releasedTestToneStatus
             AppLogger.shared.write(
-                "AUDIO RELEASE completed reason=\(reason) state={\(self.audioOutput.diagnosticState())}"
+                "AUDIO RELEASE completed reason=\(reason) state={\(self.audioOutput.diagnosticState())}",
+                foldKey: "AUDIO RELEASE completed reason=\(reason)"
             )
         }
     }
