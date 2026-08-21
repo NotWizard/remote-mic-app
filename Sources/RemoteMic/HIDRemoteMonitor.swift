@@ -164,7 +164,10 @@ final class HIDRemoteMonitor {
                 updateStatus(LocalizedMessage("button_mapping.permission.accessibility_required"))
             } else {
                 updateStatus(LocalizedMessage("button_mapping.error.power_suppression_failed"))
-                AppLogger.shared.write("HID START rejected power_suppressed=false")
+                AppLogger.shared.write(
+                    "HID START rejected mapping_enabled=\(settings.customMappingEnabled) " +
+                        "power_suppressed=\(powerKeySuppressed)"
+                )
             }
             return
         }

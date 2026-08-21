@@ -1137,6 +1137,85 @@ struct RemoteButtonsTests {
         ))
     }
 
+    @Test func HIDMappingRetryKeepsReevaluatingAnUnappliedMapping() {
+        // The original failure: mapping wanted, remote connected, but the HID event system
+        // had not registered the remote yet. Before the fix this stayed broken forever.
+        #expect(HIDMappingRetryPolicy.retryDelayMilliseconds(
+            completedAttempts: 0,
+            mappingEnabled: true,
+            mappingApplied: false,
+            remoteConnected: true
+        ) == HIDMappingRetryPolicy.delaysMilliseconds[0])
+
+        #expect(HIDMappingRetryPolicy.retryDelayMilliseconds(
+            completedAttempts: 0,
+            mappingEnabled: true,
+            mappingApplied: true,
+            remoteConnected: true
+        ) == nil)
+        #expect(HIDMappingRetryPolicy.retryDelayMilliseconds(
+            completedAttempts: 0,
+            mappingEnabled: false,
+            mappingApplied: false,
+            remoteConnected: true
+        ) == nil)
+        #expect(HIDMappingRetryPolicy.retryDelayMilliseconds(
+            completedAttempts: 0,
+            mappingEnabled: true,
+            mappingApplied: false,
+            remoteConnected: false
+        ) == nil)
+    }
+
+    @Test func HIDMappingRetryBacksOffAndThenHoldsInsteadOfGivingUp() {
+        let delays = HIDMappingRetryPolicy.delaysMilliseconds
+        #expect(delays.count > 1)
+        #expect(zip(delays, delays.dropFirst()).allSatisfy { $0 < $1 })
+
+        for (attempt, expected) in delays.enumerated() {
+            #expect(HIDMappingRetryPolicy.retryDelayMilliseconds(
+                completedAttempts: attempt,
+                mappingEnabled: true,
+                mappingApplied: false,
+                remoteConnected: true
+            ) == expected)
+        }
+
+        // Past the end it holds at the slowest delay. Giving up would reproduce the
+        // original bug in a slower form.
+        for attempt in [delays.count, delays.count + 50] {
+            #expect(HIDMappingRetryPolicy.retryDelayMilliseconds(
+                completedAttempts: attempt,
+                mappingEnabled: true,
+                mappingApplied: false,
+                remoteConnected: true
+            ) == delays.last)
+        }
+
+        #expect(HIDMappingRetryPolicy.retryDelayMilliseconds(
+            completedAttempts: -3,
+            mappingEnabled: true,
+            mappingApplied: false,
+            remoteConnected: true
+        ) == delays.first)
+    }
+
+    @Test func bridgeSchedulesMappingRetryFromTheSingleStartFunnelAndCancelsOnStop() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let bridgeSource = try String(
+            contentsOf: root.appendingPathComponent("Sources/RemoteMic/BridgeAppModel.swift"),
+            encoding: .utf8
+        )
+        #expect(bridgeSource.contains("scheduleHIDMappingRetryIfNeeded()"))
+        #expect(bridgeSource.contains("HIDMappingRetryPolicy.retryDelayMilliseconds("))
+        #expect(bridgeSource.contains("cancelHIDMappingRetry()"))
+        // A successful apply must clear the backoff so a later reconnect starts fresh.
+        #expect(bridgeSource.contains("hidMappingRetryAttempts = 0"))
+    }
+
     @Test func HIDPermissionRequestsAreSequentialAndOptIn() {
         #expect(HIDPermissionGate.nextPermissionRequest(
             mappingEnabled: false,

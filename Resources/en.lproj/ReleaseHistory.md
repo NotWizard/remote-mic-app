@@ -1,5 +1,11 @@
 # Version History
 
+## 1.8.25-fork.2 (this fork)
+
+- Fixed custom button mappings falling back to system default behavior after the remote reconnected from a long sleep. Waking the remote overnight could find the system not ready with the remote's button interface yet; Remote Mic gave up after a single failure and never retried that day, so recovery required restarting the app or toggling the mapping switch. It now retries until the interface is ready and the mapping recovers on its own.
+- The problem never lost your button configuration, and the voice key kept working throughout; only custom actions on ordinary buttons were affected.
+- Automated tests for this fix pass. Verification on real hardware after an overnight sleep is not complete.
+
 ## 1.8.25 (Pre-release)
 
 - Opening an installer for the wrong architecture now clearly points to the correct version for the current Mac.

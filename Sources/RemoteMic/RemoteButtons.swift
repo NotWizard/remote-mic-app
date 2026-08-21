@@ -727,6 +727,31 @@ enum HIDPermissionGate {
     }
 }
 
+/// `HIDPermissionGate.canMonitor` consumes `powerKeySuppressed`, which is the result of
+/// writing the remote HID mapping. The HID event system registers the remote's service
+/// independently of BLE connect, so a remote waking from a long sleep can report zero
+/// matching services for a while after it connects. That made a transient not-ready-yet
+/// state a permanent verdict: button interception stayed off until the app restarted.
+///
+/// This policy turns the verdict back into something re-evaluated. Delays back off and
+/// then hold at the last value for as long as the mapping is still wanted but unapplied.
+/// There is deliberately no attempt cap: giving up would reproduce the original bug in a
+/// slower form.
+enum HIDMappingRetryPolicy {
+    static let delaysMilliseconds: [UInt64] = [500, 1_000, 2_000, 4_000, 8_000, 15_000]
+
+    static func retryDelayMilliseconds(
+        completedAttempts: Int,
+        mappingEnabled: Bool,
+        mappingApplied: Bool,
+        remoteConnected: Bool
+    ) -> UInt64? {
+        guard mappingEnabled, remoteConnected, !mappingApplied else { return nil }
+        let index = max(0, min(completedAttempts, delaysMilliseconds.count - 1))
+        return delaysMilliseconds[index]
+    }
+}
+
 enum HIDPermissionRequest: Equatable {
     case none
     case inputMonitoring

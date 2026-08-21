@@ -143,6 +143,8 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
     private var discoveryHIDMonitor: HIDRemoteMonitor?
     private var hidPowerKeySuppressed = false
     private var hidAllowedLocationIDs: Set<UInt32>?
+    private var hidMappingRetryWorkItem: DispatchWorkItem?
+    private var hidMappingRetryAttempts = 0
     private var started = false
     private var terminationObserver: NSObjectProtocol?
     private var completedUpdateHIDRecoveryWorkItem: DispatchWorkItem?
@@ -396,6 +398,8 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         started = false
         completedUpdateHIDRecoveryWorkItem?.cancel()
         completedUpdateHIDRecoveryWorkItem = nil
+        cancelHIDMappingRetry()
+        hidMappingRetryAttempts = 0
         audioStartupGeneration &+= 1
         audioDeviceRefreshGeneration &+= 1
         let shouldStopAudioOnPreparationQueue = audioStartupPending
@@ -970,13 +974,20 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
 
     private func startHIDMonitors(powerKeySuppressed: Bool) {
         stopHIDMonitors()
+        cancelHIDMappingRetry()
         hidPowerKeySuppressed = powerKeySuppressed
         hidAllowedLocationIDs = settings.customMappingEnabled
             ? voiceFunctionMapper.powerSuppressedLocationIDs
             : nil
         guard settings.customMappingEnabled else {
+            hidMappingRetryAttempts = 0
             hidStatus = LocalizedMessage("button_mapping.status.system_managed")
             return
+        }
+        if powerKeySuppressed {
+            hidMappingRetryAttempts = 0
+        } else {
+            scheduleHIDMappingRetryIfNeeded()
         }
         _ = hidEventSuppressor.start()
         for profile in settings.remoteDeviceProfiles {
@@ -992,6 +1003,47 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
             )
         }
         startHIDDiscoveryIfNeeded()
+    }
+
+    private func cancelHIDMappingRetry() {
+        hidMappingRetryWorkItem?.cancel()
+        hidMappingRetryWorkItem = nil
+    }
+
+    /// The remote's HID service can register after BLE reports ready, so a failed mapping
+    /// write is a not-ready-yet state rather than a verdict. Keep re-applying while the
+    /// mapping is still wanted and the remote is still connected.
+    private func scheduleHIDMappingRetryIfNeeded() {
+        guard started else { return }
+        guard let delay = HIDMappingRetryPolicy.retryDelayMilliseconds(
+            completedAttempts: hidMappingRetryAttempts,
+            mappingEnabled: settings.customMappingEnabled,
+            mappingApplied: hidPowerKeySuppressed,
+            remoteConnected: isConnected
+        ) else {
+            hidMappingRetryAttempts = 0
+            return
+        }
+        hidMappingRetryAttempts += 1
+        AppLogger.shared.write(
+            "HID MAPPING RETRY scheduled attempt=\(hidMappingRetryAttempts) delay_ms=\(delay)"
+        )
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.hidMappingRetryWorkItem = nil
+            guard self.started, self.settings.customMappingEnabled, self.isConnected else {
+                AppLogger.shared.write("HID MAPPING RETRY abandoned reason=preconditions_changed")
+                self.hidMappingRetryAttempts = 0
+                return
+            }
+            AppLogger.shared.write("HID MAPPING RETRY attempt=\(self.hidMappingRetryAttempts)")
+            self.applyHIDSettings()
+        }
+        hidMappingRetryWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(Int(clamping: delay)),
+            execute: workItem
+        )
     }
 
     private func stopHIDMonitors() {

@@ -1,5 +1,12 @@
 # TODO
 
+- [ ] 修复遥控器长时间休眠重连后自定义按键映射失效（待真机验收）
+  - 现场为 `1.8.17`，`1.8.25-fork.1` 同样存在。遥控器隔夜休眠后重连，写 HID 映射匹配到 0 个服务，`HIDPermissionGate` 门禁不通过，按键监听被永久拒绝，普通按键退回 macOS 原生行为且当天不会自行恢复。语音键不受影响，用户配置也未丢失。
+  - 根因：HID event system 注册遥控器服务的时机与 BLE 连接完成相互独立，`matched=0` 是瞬时"尚未就绪"，但被当作终局判定消费，且无任何路径重新评估（权限轮询定时器在启动被拒时不存在，`HID UPDATE RECOVERY` 只在 Sparkle 更新后触发）。
+  - 修复：新增纯函数 `HIDMappingRetryPolicy`，在映射开启、已连接、未应用时按 `500/1000/2000/4000/8000/15000` 毫秒退避重跑，超出后维持最后延迟，刻意不设放弃点；只在唯一汇聚点 `startHIDMonitors` 接入，成功归零，`stop`/断连/关闭映射即取消。同时修正 `HID START rejected` 无法区分 `mappingEnabled` 与 `powerKeySuppressed` 的歧义日志。
+  - 已完成：247 项 Swift 测试（新增 3 项）、42 项项目自检、Release 构建、仓库边界检查通过；修复前新增测试无法编译，确认测试依赖本修复。
+  - 待完成：真机隔夜休眠重连验收。退避上限 15 秒为日志推断值，真实 HID 枚举耗时未测量。测试手册见 [`Testing/HIDMappingReadinessRetry.md`](Testing/HIDMappingReadinessRetry.md)，缺陷记录见 [`Bugs/2026-08-21-remote-reconnect-loses-custom-button-mapping.md`](Bugs/2026-08-21-remote-reconnect-loses-custom-button-mapping.md)。
+
 - [x] 同步上游 v1.8.25 并让本 fork 可独立构建
   - 上游 198 个提交已合并；本分支 4 项改动（可配置语音触发键、遥控器麦克风收音开关、右修饰键卡住修复、自定义快捷键修饰键左右侧修复）全部保留，Swift 源码自动合并无冲突。
   - 上游把私有组件 `GetSayAll/sayall-mac-remote` 声明为无条件依赖，本仓库无访问权限，SwiftPM 解析阶段即失败。已改为指向 [`Vendor/sayall-mac-remote`](Vendor/sayall-mac-remote) 本地 stub，`swift build`、`swift test`（244 项）、`scripts/test.sh`（42 项）和 Release 构建均通过。详见 [`Bugs/2026-08-18-private-mac-remote-package-fork-access.md`](Bugs/2026-08-18-private-mac-remote-package-fork-access.md)。
