@@ -432,7 +432,35 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// Keys whose stored data existed but could not be decoded on the last load. The raw
+    /// bytes are preserved under "<key>.corrupt" so a reset is recoverable and visible
+    /// instead of looking like a first run.
+    @Published private(set) var corruptedSettingKeys: [String] = []
+
+    /// Splits "never saved" from "saved but unreadable". Only the latter is a fault, and
+    /// silently treating it as a first run is what let user configuration disappear.
+    /// Static because callers run inside `init` before the instance is fully formed.
+    private static func decodeSetting<T: Decodable>(
+        _ type: T.Type,
+        forKey key: String,
+        from defaults: UserDefaults,
+        corrupted: inout [String]
+    ) -> T? {
+        guard let data = defaults.data(forKey: key) else { return nil }
+        do {
+            return try JSONDecoder().decode(type, from: data)
+        } catch {
+            defaults.set(data, forKey: "\(key).corrupt")
+            corrupted.append(key)
+            AppLogger.shared.write(
+                "SETTINGS decode_failed key=\(key) bytes=\(data.count) error=\(error)"
+            )
+            return nil
+        }
+    }
+
     init(defaults: UserDefaults = .standard) {
+        var corruptedKeys: [String] = []
         self.defaults = defaults
         remoteDeviceProfiles = []
         selectedRemoteProfileID = nil
@@ -446,10 +474,12 @@ final class AppSettings: ObservableObject {
             customMappingEnabled = defaults.bool(forKey: Keys.legacyExclusiveHID)
         }
 
-        if
-            let data = defaults.data(forKey: Keys.buttonBindings),
-            let decoded = try? JSONDecoder().decode([String: ButtonAction].self, from: data)
-        {
+        if let decoded = Self.decodeSetting(
+            [String: ButtonAction].self,
+            forKey: Keys.buttonBindings,
+            from: defaults,
+            corrupted: &corruptedKeys
+        ) {
             buttonBindings = Self.defaultBindings.merging(
                 Dictionary(uniqueKeysWithValues: decoded.compactMap { key, value in
                     RemoteButton(rawValue: key).map { ($0, value) }
@@ -459,10 +489,12 @@ final class AppSettings: ObservableObject {
             buttonBindings = Self.defaultBindings
         }
 
-        if
-            let data = defaults.data(forKey: Keys.buttonShortcuts),
-            let decoded = try? JSONDecoder().decode([String: CustomKeyboardShortcut].self, from: data)
-        {
+        if let decoded = Self.decodeSetting(
+            [String: CustomKeyboardShortcut].self,
+            forKey: Keys.buttonShortcuts,
+            from: defaults,
+            corrupted: &corruptedKeys
+        ) {
             buttonShortcuts = Dictionary(uniqueKeysWithValues: decoded.compactMap { key, value in
                 RemoteButton(rawValue: key).map { ($0, value) }
             })
@@ -470,10 +502,12 @@ final class AppSettings: ObservableObject {
             buttonShortcuts = [:]
         }
 
-        if
-            let data = defaults.data(forKey: Keys.buttonApplicationProfileIDs),
-            let decoded = try? JSONDecoder().decode([String: UUID].self, from: data)
-        {
+        if let decoded = Self.decodeSetting(
+            [String: UUID].self,
+            forKey: Keys.buttonApplicationProfileIDs,
+            from: defaults,
+            corrupted: &corruptedKeys
+        ) {
             buttonApplicationProfileIDs = Dictionary(
                 uniqueKeysWithValues: decoded.compactMap { key, value in
                     RemoteButton(rawValue: key).map { ($0, value) }
@@ -483,13 +517,12 @@ final class AppSettings: ObservableObject {
             buttonApplicationProfileIDs = [:]
         }
 
-        if
-            let data = defaults.data(forKey: Keys.secondaryButtonBindings),
-            let decoded = try? JSONDecoder().decode(
-                [String: [String: ConfiguredButtonAction]].self,
-                from: data
-            )
-        {
+        if let decoded = Self.decodeSetting(
+            [String: [String: ConfiguredButtonAction]].self,
+            forKey: Keys.secondaryButtonBindings,
+            from: defaults,
+            corrupted: &corruptedKeys
+        ) {
             secondaryButtonBindings = Dictionary(uniqueKeysWithValues: decoded.compactMap { buttonKey, bindings in
                 guard let button = RemoteButton(rawValue: buttonKey) else { return nil }
                 let parsed = Dictionary(uniqueKeysWithValues: bindings.compactMap { triggerKey, binding in
@@ -501,10 +534,12 @@ final class AppSettings: ObservableObject {
             secondaryButtonBindings = [:]
         }
 
-        customApplicationProfiles = defaults
-            .data(forKey: Keys.customApplicationProfiles)
-            .flatMap { try? JSONDecoder().decode([CustomApplicationProfile].self, from: $0) }
-            ?? []
+        customApplicationProfiles = Self.decodeSetting(
+            [CustomApplicationProfile].self,
+            forKey: Keys.customApplicationProfiles,
+            from: defaults,
+            corrupted: &corruptedKeys
+        ) ?? []
 
         applicationLanguage = AppLanguage(
             rawValue: defaults.string(forKey: Keys.applicationLanguage) ?? ""
@@ -527,22 +562,31 @@ final class AppSettings: ObservableObject {
         voiceKeyUsesRemoteMicrophone = defaults.object(forKey: Keys.voiceKeyUsesRemoteMicrophone) == nil
             ? true
             : defaults.bool(forKey: Keys.voiceKeyUsesRemoteMicrophone)
-        continuousRecordingPowerBindingBackup = defaults
-            .data(forKey: Keys.continuousRecordingPowerBindingBackup)
-            .flatMap { try? JSONDecoder().decode(ConfiguredButtonAction.self, from: $0) }
+        continuousRecordingPowerBindingBackup = Self.decodeSetting(
+            ConfiguredButtonAction.self,
+            forKey: Keys.continuousRecordingPowerBindingBackup,
+            from: defaults,
+            corrupted: &corruptedKeys
+        )
         totalButtonPressCount = (
             defaults.object(forKey: Keys.totalButtonPressCount) as? NSNumber
         )?.uint64Value ?? 0
         totalVoiceDuration = defaults.object(forKey: Keys.totalVoiceDuration) == nil
             ? 0
             : max(0, defaults.double(forKey: Keys.totalVoiceDuration))
-        dailyStatistics = defaults.data(forKey: Keys.dailyStatistics)
-            .flatMap { try? JSONDecoder().decode([String: DailyUsageStatistics].self, from: $0) }
-            ?? [:]
+        dailyStatistics = Self.decodeSetting(
+            [String: DailyUsageStatistics].self,
+            forKey: Keys.dailyStatistics,
+            from: defaults,
+            corrupted: &corruptedKeys
+        ) ?? [:]
         voiceSessionRanking = Self.normalizedVoiceSessionRanking(
-            defaults.data(forKey: Keys.voiceSessionRanking)
-                .flatMap { try? JSONDecoder().decode([VoiceSessionUsageRecord].self, from: $0) }
-                ?? []
+            Self.decodeSetting(
+                [VoiceSessionUsageRecord].self,
+                forKey: Keys.voiceSessionRanking,
+                from: defaults,
+                corrupted: &corruptedKeys
+            ) ?? []
         )
         trustedPhoneIdentityFingerprints = Set(
             defaults.stringArray(forKey: Keys.trustedPhoneIdentityFingerprints) ?? []
@@ -560,11 +604,13 @@ final class AppSettings: ObservableObject {
             buttonApplicationProfileIDs: buttonApplicationProfileIDs,
             secondaryButtonBindings: secondaryButtonBindings
         )
-        if
-            let data = defaults.data(forKey: Keys.remoteDeviceProfiles),
-            let decoded = try? JSONDecoder().decode([RemoteDeviceProfile].self, from: data),
-            !decoded.isEmpty
-        {
+        let decodedRemoteDeviceProfiles = Self.decodeSetting(
+            [RemoteDeviceProfile].self,
+            forKey: Keys.remoteDeviceProfiles,
+            from: defaults,
+            corrupted: &corruptedKeys
+        )
+        if let decoded = decodedRemoteDeviceProfiles, !decoded.isEmpty {
             remoteDeviceProfiles = decoded
             let savedID = defaults.string(forKey: Keys.selectedRemoteProfileID).flatMap(UUID.init(uuidString:))
             selectedRemoteProfileID = decoded.contains(where: { $0.id == savedID })
@@ -591,6 +637,7 @@ final class AppSettings: ObservableObject {
             enabled: experimentalContinuousRecordingEnabled,
             backup: continuousRecordingPowerBindingBackup
         )
+        corruptedSettingKeys = corruptedKeys
     }
 
     func setOnboardingStep(_ step: OnboardingStep) {
@@ -631,9 +678,19 @@ final class AppSettings: ObservableObject {
     }
 
     var firstUseEvents: [FirstUseEvent] {
-        defaults.data(forKey: Keys.firstUseEvents)
-            .flatMap { try? JSONDecoder().decode([FirstUseEvent].self, from: $0) }
-            ?? []
+        // Deliberately dropped instead of feeding `corruptedSettingKeys`: this is a getter, so
+        // publishing here would mutate observable state during a SwiftUI read and would append
+        // the same key on every access. These events are onboarding telemetry, not user
+        // configuration, so they must not raise the user-facing "settings lost" signal. The
+        // helper still logs and preserves the raw bytes, which matters because
+        // `recordFirstUseEvent` overwrites this key immediately after reading it.
+        var discardedCorruptedKeys: [String] = []
+        return Self.decodeSetting(
+            [FirstUseEvent].self,
+            forKey: Keys.firstUseEvents,
+            from: defaults,
+            corrupted: &discardedCorruptedKeys
+        ) ?? []
     }
 
     func setOnboardingVoiceTool(_ voiceTool: OnboardingVoiceTool) {

@@ -1,5 +1,25 @@
 # TODO
 
+## 代码审计整改台账（A1–A10）
+
+来源：2026-08-21 五领域并行代码审计。每项独立 commit，实施后由独立复核 Agent 实跑验证命令并有否决权。基线：`swift test` 255 项、`scripts/test.sh` 42 项。
+
+| 编号 | 状态 | 问题 | 主要位置 |
+| --- | --- | --- | --- |
+| A1 | **已修复** | 10 处 `try?` 解码失败静默重置用户配置，无日志无 UI，把"首次无数据"与"解码失败"混为一谈。已闭合三部分：日志、`.corrupt` 原始字节备份、按键映射页内联提示。**定位为防御性加固**——无证据表明已有用户命中解码失败，此前那次配置丢失的根因是 HID 就绪（见 `Bugs/2026-08-21-remote-reconnect-loses-custom-button-mapping.md`） | `Sources/RemoteMic/AppSettings.swift` 449–565 与约 690（`firstUseEvents`） |
+| A2 | **已提交** `858bb9c` | `killall coreaudiod` 在 `set -euo pipefail` 下无匹配进程即中止脚本，安装/卸载已完成却报失败 | 4 个安装脚本 |
+| A3 | **已修复** | 日志无轮转、每行开关文件、权限 644；`write` 非 `@autoclosure` 且释放路径缺幂等门，单条消息占日志 47%。折叠经复核否决后改为显式白名单（原启发式会把 1586 行内容不同的消息错误合并，等于把 A6 缺陷推广到 220 类消息）。投影：113242 → 53823 行（−52.5%）、21.49 → 10.59 MB（−50.7%） | `AppLogger.swift:18`、`BridgeAppModel.swift:2074` |
+| A4 | 待开始 | 每轮重建 central + 自建 8s 超时 + 3s 重试，遥控器缺席时 315 次/小时空转；`connect()` 本就永久挂起 | `XiaomiBluetoothBridge.swift:212/389-408/436-462` |
+| A5 | 待开始 | `drainCompletion` 单槽被置 nil 却从不调用且作废兜底定时器，`.draining` 无超时出口，语音会话可永久卡死 | `AudioOutput.swift:463/494/516`、`VoiceFnTapSessionController` |
+| A6 | 待开始 | 关键 `return` 无日志或多种原因压成同一条，线上无法定位 | `HIDRemoteMonitor.swift:146/196-205/245-252/668-672` |
+| A7 | 待开始 | 蓝牙桥零行为测试；全库 28% 断言只验证源码文本仍存在 | `XiaomiBluetoothBridge.swift`、`Tests/` |
+| A8 | 待开始 | 未标 `@MainActor`，21 个 `@Published` 靠手写 main hop 维持，`webRemoteState` 回调已漏 | `BridgeAppModel.swift:313-315` |
+| A9 | 待开始 | 52 处中文渲染 10–11pt、授权弹窗硬编码中文、`minSize` 使 800×650 门禁不可达、窄窗压遥控器图 | `SettingsView.swift`、`BridgeAppModel.swift:1580-1596`、`RemoteMicApp.swift:718` |
+| A10 | 待开始 | 配置导入仅校验两个字段即接收任意 app 路径与快捷键；信任存储无过期无吊销 | `AppSettings.swift:1247` |
+
+跨私有仓库的协议变更（A10 的信任改密钥、远程指令逐帧认证）不在本仓实现，只做本仓可收敛部分并记录。
+
+
 - [ ] 拆分安装制品，修复 pkg 删除已安装 App（待真机验收）
   - `v1.8.25-fork.2` 的 DMG 会因 macOS bundle relocation 把安装目标改写到 Launch Services 记录的旧路径，删除用户正在使用的 `/Applications/Remote Mic.app`，随后 `postinstall` 因目标不存在而失败（Code=112）。用户偏好被新版按全新安装重写。该 DMG 资产已从 Release 撤下并加了警告。
   - 根因：`pkgbuild --root` 未传 `--component-plist`，app bundle 的 `BundleIsRelocatable` 默认为真，而 payload 里同时含 App 与驱动。任何把 App 放在非 `/Applications` 位置的用户都会触发，不限开发机。
