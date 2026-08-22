@@ -55,6 +55,7 @@ struct TestToneTests {
         #expect(!AudioPlayerNodeSafety.play(player))
     }
 
+    @MainActor
     @Test func productionModelRejectsTestToneWithoutAReadyDevice() {
         let model = BridgeAppModel()
         #expect(!model.canSendTestTone)

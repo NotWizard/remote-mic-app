@@ -1,5 +1,6 @@
 # Bug 记录
 
+- [SwiftUI 观察的发布状态在主线程之外被写入](./2026-08-21-published-state-updated-off-the-main-thread.md)
 - [承重最重的蓝牙桥没有任何行为测试覆盖](./2026-08-21-bluetooth-bridge-had-no-behaviour-coverage.md)
 - [界面违反本仓库自己写下的字号与本地化规则](./2026-08-21-interface-breaks-the-projects-own-font-and-locale-rules.md)
 - [导入配置几乎不校验，可为按键装上任意应用与快捷键触发器](./2026-08-21-configuration-import-accepts-arbitrary-app-and-shortcut.md)

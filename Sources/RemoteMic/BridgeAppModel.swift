@@ -77,6 +77,13 @@ enum BluetoothVoiceStopPolicy {
     }
 }
 
+/// Main-actor isolated on purpose: the 22 `@Published` properties below are observed by
+/// SwiftUI, so every mutation has to happen on the main actor. That used to be maintained
+/// by hand with one `DispatchQueue.main.async` per callback entry point, and the discipline
+/// failed — `webRemoteClient.onStateChange` published `webRemoteState` straight from the
+/// transport's thread. The isolation makes the compiler carry that rule, so the only hops
+/// left are the ones for callbacks that genuinely arrive off the main thread.
+@MainActor
 final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
     private static let longRecordingOpenTimeout: TimeInterval = 5
     private static let longRecordingCloseTimeout: TimeInterval = 2
@@ -108,7 +115,12 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
     @Published private(set) var webRemoteState: WebRemoteSessionState = .disabled
     @Published private(set) var voiceShortcutStatus = LocalizedMessage("voice_button.status.preparing")
 
-    private let audioOutput = VirtualAudioOutput()
+    /// `nonisolated` because this object is deliberately driven from more than the main
+    /// thread: `configure`/`stop` run on `audioPreparationQueue` (CoreAudio device work is
+    /// slow), and its drain bookkeeping runs on AVAudioEngine's own buffer-completion
+    /// threads behind an internal lock. Only the *reference* is nonisolated; the published
+    /// state derived from it is still assigned on the main actor.
+    private nonisolated let audioOutput = VirtualAudioOutput()
     private let phoneRemoteServer = PhoneRemoteServer(logger: { message in
         AppLogger.shared.write(message)
     })
@@ -215,33 +227,51 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         self.privateFeature = privateFeature
         self.macroFeature = macroFeature
         audioDevices = initialAudioDevices
-        audioOutput.onConfigurationChange = { [weak self] in
+        // Every transport callback below is written `@Sendable` on purpose. The phone, watch
+        // and web transports deliver on their own queues, but a plain closure literal
+        // written inside this `@MainActor` initializer *silently inherits* main-actor
+        // isolation — which is exactly how `webRemoteClient.onStateChange` came to publish
+        // `webRemoteState` from the transport's thread with the compiler saying nothing.
+        // `@Sendable` opts out of that inference, so the hop is now a compiler requirement
+        // instead of a convention: remove one and the build fails.
+        audioOutput.onConfigurationChange = { @Sendable [weak self] in
             self?.scheduleAudioRecovery(reason: "engine_configuration_change")
         }
+        // The one callback that cannot hop: it has to return the answer in the caller's
+        // frame. It reads `AppSettings` from the transport's thread, which the isolation
+        // cannot express — see the automation boundary in
+        // Bugs/2026-08-21-published-state-updated-off-the-main-thread.md.
         phoneRemoteServer.isIdentityTrusted = { [weak self] fingerprint in
             self?.settings.isPhoneIdentityTrusted(fingerprint) ?? false
         }
-        phoneRemoteServer.onConnectionStateChange = { [weak self] connected in
+        phoneRemoteServer.onConnectionStateChange = { @Sendable [weak self] connected in
             DispatchQueue.main.async {
                 self?.isPhoneRemoteConnected = connected
             }
         }
-        phoneRemoteServer.onApprovalCancelled = { [weak self] in
-            self?.cancelPhoneApproval()
-        }
-        phoneRemoteServer.onApprovalRequested = { [weak self] deviceName, pairingCode, fingerprint, completion in
-            guard let self, self.isPhoneRemoteConnectionEnabled else {
-                completion(false)
-                return
+        phoneRemoteServer.onApprovalCancelled = { @Sendable [weak self] in
+            DispatchQueue.main.async {
+                self?.cancelPhoneApproval()
             }
-            requestPhoneApproval(
-                deviceName: deviceName,
-                pairingCode: pairingCode,
-                identityFingerprint: fingerprint,
-                completion: completion
-            )
         }
-        phoneRemoteServer.onCommand = { [weak self] button, completion in
+        phoneRemoteServer.onApprovalRequested = { @Sendable [weak self] deviceName, pairingCode, fingerprint, completion in
+            DispatchQueue.main.async {
+                // Belt-and-braces from the cancel-waiting fix: an approval that arrives
+                // after the user stopped listening is refused rather than re-opening the
+                // modal. Unlike before, the flag is read here on the main actor.
+                guard let self, self.isPhoneRemoteConnectionEnabled else {
+                    completion(false)
+                    return
+                }
+                self.requestPhoneApproval(
+                    deviceName: deviceName,
+                    pairingCode: pairingCode,
+                    identityFingerprint: fingerprint,
+                    completion: completion
+                )
+            }
+        }
+        phoneRemoteServer.onCommand = { @Sendable [weak self] button, completion in
             DispatchQueue.main.async {
                 guard let button = Self.appRemoteButton(rawValue: button.rawValue) else {
                     completion(false)
@@ -250,7 +280,7 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
                 completion(self?.performPhoneCommand(button, source: .nearbyPhone) ?? false)
             }
         }
-        phoneRemoteServer.onButtonEvent = { [weak self] button, phase, completion in
+        phoneRemoteServer.onButtonEvent = { @Sendable [weak self] button, phase, completion in
             DispatchQueue.main.async {
                 guard let button = Self.appRemoteButton(rawValue: button.rawValue),
                       let phase = Self.appRemoteButtonPhase(rawValue: phase.rawValue)
@@ -265,22 +295,22 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
                 ) ?? false)
             }
         }
-        phoneRemoteServer.onButtonEventsReset = { [weak self] in
+        phoneRemoteServer.onButtonEventsReset = { @Sendable [weak self] in
             DispatchQueue.main.async {
                 self?.resetMobileButtonGestures(source: .nearbyPhone)
             }
         }
-        phoneRemoteServer.onVoiceStartResult = { [weak self] completion in
+        phoneRemoteServer.onVoiceStartResult = { @Sendable [weak self] completion in
             DispatchQueue.main.async {
                 completion(self?.startPhoneVoice(source: .nearbyPhone) ?? .unavailable)
             }
         }
-        phoneRemoteServer.onVoiceStop = { [weak self] in
+        phoneRemoteServer.onVoiceStop = { @Sendable [weak self] in
             DispatchQueue.main.async {
                 self?.stopPhoneVoice(source: .nearbyPhone)
             }
         }
-        phoneRemoteServer.onAudio = { [weak self] samples in
+        phoneRemoteServer.onAudio = { @Sendable [weak self] samples in
             DispatchQueue.main.async {
                 self?.receivePhoneAudio(samples, source: .nearbyPhone)
             }
@@ -288,27 +318,31 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         watchBluetoothServer.isIdentityTrusted = { [weak self] fingerprint in
             self?.settings.isPhoneIdentityTrusted(fingerprint) ?? false
         }
-        watchBluetoothServer.onConnectionStateChange = { [weak self] connected in
+        watchBluetoothServer.onConnectionStateChange = { @Sendable [weak self] connected in
             DispatchQueue.main.async {
                 self?.isWatchRemoteConnected = connected
             }
         }
-        watchBluetoothServer.onApprovalCancelled = { [weak self] in
-            self?.cancelPhoneApproval()
-        }
-        watchBluetoothServer.onApprovalRequested = { [weak self] deviceName, pairingCode, fingerprint, completion in
-            guard let self, self.isPhoneRemoteConnectionEnabled else {
-                completion(false)
-                return
+        watchBluetoothServer.onApprovalCancelled = { @Sendable [weak self] in
+            DispatchQueue.main.async {
+                self?.cancelPhoneApproval()
             }
-            requestPhoneApproval(
-                deviceName: deviceName,
-                pairingCode: pairingCode,
-                identityFingerprint: fingerprint,
-                completion: completion
-            )
         }
-        watchBluetoothServer.onCommand = { [weak self] button, completion in
+        watchBluetoothServer.onApprovalRequested = { @Sendable [weak self] deviceName, pairingCode, fingerprint, completion in
+            DispatchQueue.main.async {
+                guard let self, self.isPhoneRemoteConnectionEnabled else {
+                    completion(false)
+                    return
+                }
+                self.requestPhoneApproval(
+                    deviceName: deviceName,
+                    pairingCode: pairingCode,
+                    identityFingerprint: fingerprint,
+                    completion: completion
+                )
+            }
+        }
+        watchBluetoothServer.onCommand = { @Sendable [weak self] button, completion in
             DispatchQueue.main.async {
                 guard let button = Self.appRemoteButton(rawValue: button.rawValue) else {
                     completion(false)
@@ -317,7 +351,7 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
                 completion(self?.performPhoneCommand(button, source: .nearbyPhone) ?? false)
             }
         }
-        watchBluetoothServer.onButtonEvent = { [weak self] button, phase, completion in
+        watchBluetoothServer.onButtonEvent = { @Sendable [weak self] button, phase, completion in
             DispatchQueue.main.async {
                 guard let button = Self.appRemoteButton(rawValue: button.rawValue),
                       let phase = Self.appRemoteButtonPhase(rawValue: phase.rawValue)
@@ -332,44 +366,50 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
                 ) ?? false)
             }
         }
-        watchBluetoothServer.onButtonEventsReset = { [weak self] in
+        watchBluetoothServer.onButtonEventsReset = { @Sendable [weak self] in
             DispatchQueue.main.async {
                 self?.resetMobileButtonGestures(source: .nearbyPhone)
             }
         }
-        watchBluetoothServer.onVoiceStartResult = { [weak self] completion in
+        watchBluetoothServer.onVoiceStartResult = { @Sendable [weak self] completion in
             DispatchQueue.main.async {
                 completion(self?.startPhoneVoice(source: .nearbyWatch) ?? .unavailable)
             }
         }
-        watchBluetoothServer.onVoiceStop = { [weak self] in
+        watchBluetoothServer.onVoiceStop = { @Sendable [weak self] in
             DispatchQueue.main.async {
                 self?.stopPhoneVoice(source: .nearbyWatch)
             }
         }
-        watchBluetoothServer.onAudio = { [weak self] samples in
+        watchBluetoothServer.onAudio = { @Sendable [weak self] samples in
             DispatchQueue.main.async {
                 self?.receivePhoneAudio(samples, source: .nearbyWatch)
             }
         }
-        webRemoteClient.onStateChange = { [weak self] state in
-            self?.webRemoteState = state
-        }
-        webRemoteClient.onApprovalCancelled = { [weak self] in
-            self?.cancelWebApproval()
-        }
-        webRemoteClient.onApprovalRequested = { [weak self] deviceName, pairingCode, completion in
-            guard let self else {
-                completion(false)
-                return
+        webRemoteClient.onStateChange = { @Sendable [weak self] state in
+            DispatchQueue.main.async {
+                self?.webRemoteState = state
             }
-            requestWebApproval(
-                deviceName: deviceName,
-                pairingCode: pairingCode,
-                completion: completion
-            )
         }
-        webRemoteClient.onCommand = { [weak self] button, completion in
+        webRemoteClient.onApprovalCancelled = { @Sendable [weak self] in
+            DispatchQueue.main.async {
+                self?.cancelWebApproval()
+            }
+        }
+        webRemoteClient.onApprovalRequested = { @Sendable [weak self] deviceName, pairingCode, completion in
+            DispatchQueue.main.async {
+                guard let self else {
+                    completion(false)
+                    return
+                }
+                self.requestWebApproval(
+                    deviceName: deviceName,
+                    pairingCode: pairingCode,
+                    completion: completion
+                )
+            }
+        }
+        webRemoteClient.onCommand = { @Sendable [weak self] button, completion in
             DispatchQueue.main.async {
                 guard let button = Self.appRemoteButton(rawValue: button.rawValue) else {
                     completion(false)
@@ -378,7 +418,7 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
                 completion(self?.performPhoneCommand(button, source: .webRemote) ?? false)
             }
         }
-        webRemoteClient.onButtonEvent = { [weak self] button, phase, completion in
+        webRemoteClient.onButtonEvent = { @Sendable [weak self] button, phase, completion in
             DispatchQueue.main.async {
                 guard let button = Self.appRemoteButton(rawValue: button.rawValue),
                       let phase = Self.appRemoteButtonPhase(rawValue: phase.rawValue)
@@ -393,22 +433,22 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
                 ) ?? false)
             }
         }
-        webRemoteClient.onButtonEventsReset = { [weak self] in
+        webRemoteClient.onButtonEventsReset = { @Sendable [weak self] in
             DispatchQueue.main.async {
                 self?.resetMobileButtonGestures(source: .webRemote)
             }
         }
-        webRemoteClient.onVoiceStart = { [weak self] completion in
+        webRemoteClient.onVoiceStart = { @Sendable [weak self] completion in
             DispatchQueue.main.async {
                 completion(self?.startPhoneVoice(source: .web) == .started)
             }
         }
-        webRemoteClient.onVoiceStop = { [weak self] in
+        webRemoteClient.onVoiceStop = { @Sendable [weak self] in
             DispatchQueue.main.async {
                 self?.stopPhoneVoice(source: .web)
             }
         }
-        webRemoteClient.onAudio = { [weak self] samples in
+        webRemoteClient.onAudio = { @Sendable [weak self] samples in
             DispatchQueue.main.async {
                 self?.receivePhoneAudio(samples, source: .web)
             }
@@ -425,7 +465,10 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.stop()
+            // `queue: .main` above is the guarantee. Checking it with `assumeIsolated`
+            // rather than hopping matters here: an async hop would let the process exit
+            // before the teardown ran.
+            MainActor.assumeIsolated { self?.stop() }
         }
         let version = Bundle.main.object(
             forInfoDictionaryKey: "CFBundleShortVersionString"
@@ -494,7 +537,8 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         AppLogger.shared.write("APP STOP")
     }
 
-    static func shouldRecoverHIDAfterCompletedUpdate(
+    /// `nonisolated`: a pure predicate over its arguments, like the other static helpers here.
+    nonisolated static func shouldRecoverHIDAfterCompletedUpdate(
         completedUpdate: Bool,
         customMappingEnabled: Bool
     ) -> Bool {
@@ -703,7 +747,9 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         doubaoAudioStatus = DoubaoAudioDevicePolicy.status(in: devices)
     }
 
-    private static func audioDevicesDiagnostic(_ devices: [AudioDeviceInfo]) -> String {
+    /// `nonisolated`: a pure function over its argument, called on `audioPreparationQueue`
+    /// while the device list is still being gathered off the main thread.
+    private nonisolated static func audioDevicesDiagnostic(_ devices: [AudioDeviceInfo]) -> String {
         "outputs={\(CoreAudioDeviceCatalog.outputDevicesDiagnostic(devices))} " +
             CoreAudioDeviceCatalog.routeDiagnostic()
     }
@@ -814,7 +860,13 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         observedAudioHardwareAddresses.removeAll()
     }
 
-    private func scheduleAudioRecovery(reason: String, details: String = "") {
+    /// `nonisolated` because both entry points are off the main thread: the
+    /// `AVAudioEngineConfigurationChange` notification is observed with `queue: nil` (so it
+    /// arrives on whichever thread posts it) and the CoreAudio property listener block runs
+    /// on `audioHardwareListenerQueue`. The hop below is therefore load-bearing, and marking
+    /// the method `nonisolated` is what makes the compiler check that nothing outside it
+    /// touches published state.
+    private nonisolated func scheduleAudioRecovery(reason: String, details: String = "") {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.started else { return }
             guard !self.settings.selectedAudioDeviceUID.isEmpty else {
@@ -865,7 +917,9 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         }
     }
 
-    private static func audioHardwarePropertyNames(
+    /// `nonisolated`: called from the CoreAudio property listener block, which runs on
+    /// `audioHardwareListenerQueue`.
+    private nonisolated static func audioHardwarePropertyNames(
         count: UInt32,
         addresses: UnsafePointer<AudioObjectPropertyAddress>
     ) -> String {
@@ -881,7 +935,7 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         addresses.map { audioHardwarePropertyName($0.mSelector) }.joined(separator: ",")
     }
 
-    private static func audioHardwarePropertyName(
+    private nonisolated static func audioHardwarePropertyName(
         _ selector: AudioObjectPropertySelector
     ) -> String {
         switch selector {
@@ -1658,122 +1712,118 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         }
     }
 
+    /// Callers hop at the transport boundary, so this runs on the main actor already. The
+    /// enabled-check stays immediately before the alert is built: that is the "reject the
+    /// late request instead of re-opening the modal" rule from the cancel-waiting fix.
     private func requestPhoneApproval(
         deviceName: String,
         pairingCode: String,
         identityFingerprint: String?,
         completion: @escaping (Bool) -> Void
     ) {
-        DispatchQueue.main.async {
-            guard self.isPhoneRemoteConnectionEnabled else {
-                completion(false)
-                return
-            }
-            NSApp.activate(ignoringOtherApps: true)
-            let localization = LocalizationStore(settings: self.settings)
-            let alert = NSAlert()
-            alert.messageText = ConnectionApprovalAlertText
-                .nearbyTitle(deviceName: deviceName)
-                .text(using: localization)
-            if Self.isAppleWatchDeviceName(deviceName) {
-                alert.informativeText = ConnectionApprovalAlertText.watchDetail
-                    .text(using: localization)
-            } else {
-                alert.informativeText = ConnectionApprovalAlertText.phoneDetail
-                    .text(using: localization)
-            }
-            let codeLabel = NSTextField(labelWithString: pairingCode.map(String.init).joined(separator: " "))
-            codeLabel.frame = NSRect(x: 0, y: 0, width: 300, height: 44)
-            codeLabel.alignment = .center
-            codeLabel.font = .monospacedDigitSystemFont(ofSize: 30, weight: .bold)
-            codeLabel.textColor = .controlAccentColor
-            codeLabel.setAccessibilityLabel(
-                ConnectionApprovalAlertText
-                    .pairingCodeAccessibility(pairingCode: pairingCode)
-                    .text(using: localization)
-            )
-            alert.accessoryView = codeLabel
-            alert.addButton(withTitle: ConnectionApprovalAlertText.allow.text(using: localization))
-            alert.addButton(withTitle: ConnectionApprovalAlertText.deny.text(using: localization))
-            alert.addButton(
-                withTitle: ConnectionApprovalAlertText.stopWaiting.text(using: localization)
-            )
-            self.phoneApprovalAlert = alert
-            let response = alert.runModal()
-            guard self.phoneApprovalAlert === alert else {
-                completion(false)
-                return
-            }
-            self.phoneApprovalAlert = nil
-            if response == .alertThirdButtonReturn {
-                completion(false)
-                self.disablePhoneRemoteConnection()
-                return
-            }
-            let allowed = response == .alertFirstButtonReturn
-            if allowed, let identityFingerprint {
-                self.settings.trustPhoneIdentity(identityFingerprint)
-            }
-            completion(allowed)
+        guard self.isPhoneRemoteConnectionEnabled else {
+            completion(false)
+            return
         }
+        NSApp.activate(ignoringOtherApps: true)
+        let localization = LocalizationStore(settings: settings)
+        let alert = NSAlert()
+        alert.messageText = ConnectionApprovalAlertText
+            .nearbyTitle(deviceName: deviceName)
+            .text(using: localization)
+        if Self.isAppleWatchDeviceName(deviceName) {
+            alert.informativeText = ConnectionApprovalAlertText.watchDetail
+                .text(using: localization)
+        } else {
+            alert.informativeText = ConnectionApprovalAlertText.phoneDetail
+                .text(using: localization)
+        }
+        let codeLabel = NSTextField(labelWithString: pairingCode.map(String.init).joined(separator: " "))
+        codeLabel.frame = NSRect(x: 0, y: 0, width: 300, height: 44)
+        codeLabel.alignment = .center
+        codeLabel.font = .monospacedDigitSystemFont(ofSize: 30, weight: .bold)
+        codeLabel.textColor = .controlAccentColor
+        codeLabel.setAccessibilityLabel(
+            ConnectionApprovalAlertText
+                .pairingCodeAccessibility(pairingCode: pairingCode)
+                .text(using: localization)
+        )
+        alert.accessoryView = codeLabel
+        alert.addButton(withTitle: ConnectionApprovalAlertText.allow.text(using: localization))
+        alert.addButton(withTitle: ConnectionApprovalAlertText.deny.text(using: localization))
+        alert.addButton(
+            withTitle: ConnectionApprovalAlertText.stopWaiting.text(using: localization)
+        )
+        phoneApprovalAlert = alert
+        let response = alert.runModal()
+        guard phoneApprovalAlert === alert else {
+            completion(false)
+            return
+        }
+        phoneApprovalAlert = nil
+        if response == .alertThirdButtonReturn {
+            completion(false)
+            disablePhoneRemoteConnection()
+            return
+        }
+        let allowed = response == .alertFirstButtonReturn
+        if allowed, let identityFingerprint {
+            settings.trustPhoneIdentity(identityFingerprint)
+        }
+        completion(allowed)
     }
 
     private func cancelPhoneApproval() {
-        DispatchQueue.main.async {
-            guard let alert = self.phoneApprovalAlert else { return }
-            self.phoneApprovalAlert = nil
-            NSApp.abortModal()
-            alert.window.orderOut(nil)
-        }
+        guard let alert = phoneApprovalAlert else { return }
+        phoneApprovalAlert = nil
+        NSApp.abortModal()
+        alert.window.orderOut(nil)
     }
 
+    /// Callers hop at the transport boundary, so this runs on the main actor already.
     private func requestWebApproval(
         deviceName: String,
         pairingCode: String,
         completion: @escaping (Bool) -> Void
     ) {
-        DispatchQueue.main.async {
-            NSApp.activate(ignoringOtherApps: true)
-            let localization = LocalizationStore(settings: self.settings)
-            let alert = NSAlert()
-            alert.messageText = ConnectionApprovalAlertText
-                .webTitle(deviceName: deviceName)
+        NSApp.activate(ignoringOtherApps: true)
+        let localization = LocalizationStore(settings: settings)
+        let alert = NSAlert()
+        alert.messageText = ConnectionApprovalAlertText
+            .webTitle(deviceName: deviceName)
+            .text(using: localization)
+        alert.informativeText = ConnectionApprovalAlertText.webDetail
+            .text(using: localization)
+        let codeLabel = NSTextField(
+            labelWithString: pairingCode.map(String.init).joined(separator: " ")
+        )
+        codeLabel.frame = NSRect(x: 0, y: 0, width: 300, height: 44)
+        codeLabel.alignment = .center
+        codeLabel.font = .monospacedDigitSystemFont(ofSize: 30, weight: .bold)
+        codeLabel.textColor = .controlAccentColor
+        codeLabel.setAccessibilityLabel(
+            ConnectionApprovalAlertText
+                .pairingCodeAccessibility(pairingCode: pairingCode)
                 .text(using: localization)
-            alert.informativeText = ConnectionApprovalAlertText.webDetail
-                .text(using: localization)
-            let codeLabel = NSTextField(
-                labelWithString: pairingCode.map(String.init).joined(separator: " ")
-            )
-            codeLabel.frame = NSRect(x: 0, y: 0, width: 300, height: 44)
-            codeLabel.alignment = .center
-            codeLabel.font = .monospacedDigitSystemFont(ofSize: 30, weight: .bold)
-            codeLabel.textColor = .controlAccentColor
-            codeLabel.setAccessibilityLabel(
-                ConnectionApprovalAlertText
-                    .pairingCodeAccessibility(pairingCode: pairingCode)
-                    .text(using: localization)
-            )
-            alert.accessoryView = codeLabel
-            alert.addButton(withTitle: ConnectionApprovalAlertText.allow.text(using: localization))
-            alert.addButton(withTitle: ConnectionApprovalAlertText.deny.text(using: localization))
-            self.webApprovalAlert = alert
-            let allowed = alert.runModal() == .alertFirstButtonReturn
-            guard self.webApprovalAlert === alert else {
-                completion(false)
-                return
-            }
-            self.webApprovalAlert = nil
-            completion(allowed)
+        )
+        alert.accessoryView = codeLabel
+        alert.addButton(withTitle: ConnectionApprovalAlertText.allow.text(using: localization))
+        alert.addButton(withTitle: ConnectionApprovalAlertText.deny.text(using: localization))
+        webApprovalAlert = alert
+        let allowed = alert.runModal() == .alertFirstButtonReturn
+        guard webApprovalAlert === alert else {
+            completion(false)
+            return
         }
+        webApprovalAlert = nil
+        completion(allowed)
     }
 
     private func cancelWebApproval() {
-        DispatchQueue.main.async {
-            guard let alert = self.webApprovalAlert else { return }
-            self.webApprovalAlert = nil
-            NSApp.abortModal()
-            alert.window.orderOut(nil)
-        }
+        guard let alert = webApprovalAlert else { return }
+        webApprovalAlert = nil
+        NSApp.abortModal()
+        alert.window.orderOut(nil)
     }
 
     nonisolated static func appRemoteButton(rawValue: String) -> RemoteButton? {

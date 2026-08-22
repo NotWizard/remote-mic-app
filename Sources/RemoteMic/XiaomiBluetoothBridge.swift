@@ -25,6 +25,12 @@ enum BluetoothBridgeState: Equatable {
     }
 }
 
+/// Main-actor isolated because every delegate call already originates on the main queue:
+/// the bridge hands `queue: .main` to its `CBCentralManager`, so all CoreBluetooth
+/// callbacks land there, and its own retry/timeout work is scheduled with
+/// `DispatchQueue.main.asyncAfter`. Stating that here lets the delegate publish SwiftUI
+/// state directly instead of every implementation re-deriving the same guarantee.
+@MainActor
 protocol XiaomiBluetoothBridgeDelegate: AnyObject {
     func bluetoothBridge(_ bridge: XiaomiBluetoothBridge, didChange state: BluetoothBridgeState)
     func bluetoothBridgeDidStartVoice(_ bridge: XiaomiBluetoothBridge)
@@ -35,7 +41,11 @@ protocol XiaomiBluetoothBridgeDelegate: AnyObject {
     func bluetoothBridge(_ bridge: XiaomiBluetoothBridge, didUpdatePowerState state: RemotePowerState?)
 }
 
-private final class XiaomiPeripheralDelegateProxy: NSObject, CBPeripheralDelegate {
+// Main-actor isolated to match the bridge it forwards into. `@preconcurrency`:
+// `CBPeripheralDelegate` carries no concurrency annotations, but the peripheral inherits the
+// central manager's `queue: .main`, so these callbacks arrive on the main queue.
+@MainActor
+private final class XiaomiPeripheralDelegateProxy: NSObject, @preconcurrency CBPeripheralDelegate {
     let generation: UInt64
     weak var owner: XiaomiBluetoothBridge?
 
@@ -92,6 +102,11 @@ private final class XiaomiPeripheralDelegateProxy: NSObject, CBPeripheralDelegat
     }
 }
 
+/// Main-actor isolated because the object is already a main-queue object by construction:
+/// its `CBCentralManager` is created with `queue: .main` and its reconnect/timeout work is
+/// scheduled with `DispatchQueue.main.asyncAfter`. Saying so lets it call the main-actor
+/// `XiaomiBluetoothBridgeDelegate` directly instead of leaving that boundary unchecked.
+@MainActor
 final class XiaomiBluetoothBridge: NSObject {
     private let settings: AppSettings
     private weak var delegate: XiaomiBluetoothBridgeDelegate?
@@ -501,7 +516,11 @@ final class XiaomiBluetoothBridge: NSObject {
     }
 }
 
-extension XiaomiBluetoothBridge: CBCentralManagerDelegate {
+// `@preconcurrency`: `CBCentralManagerDelegate` carries no concurrency annotations, so a
+// main-actor witness would otherwise be reported as crossing isolation. The guarantee is
+// structural here — the manager is created with `queue: .main`, so every callback below is
+// delivered on the main queue.
+extension XiaomiBluetoothBridge: @preconcurrency CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         guard self.central === central, let generation = centralGeneration else { return }
         switch central.state {

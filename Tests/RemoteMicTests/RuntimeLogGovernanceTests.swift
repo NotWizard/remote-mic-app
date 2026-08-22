@@ -354,6 +354,7 @@ struct RuntimeLogGovernanceTests {
 
     // MARK: - 5. Idempotence gate
 
+    @MainActor
     @Test func releasingAnAlreadyReleasedOutputEmitsNoDiagnosticLine() throws {
         let suiteName = "RuntimeLogGovernanceTests.gate.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
