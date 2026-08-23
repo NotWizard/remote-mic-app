@@ -2,7 +2,7 @@
 
 ## 代码审计整改台账（A1–A10）
 
-来源：2026-08-21 五领域并行代码审计。每项独立 commit，实施后由独立复核 Agent 实跑验证命令并有否决权。基线：`swift test` 255 项、`scripts/test.sh` 42 项。
+来源：2026-08-21 五领域并行代码审计。每项独立 commit，实施后由独立复核 Agent 实跑验证命令并有否决权。会话起始基线：`swift test` 247 项、`scripts/test.sh` 42 项；当前 `swift test` 339 项 / 30 套。
 
 | 编号 | 状态 | 问题 | 主要位置 |
 | --- | --- | --- | --- |
@@ -18,6 +18,27 @@
 | A10 | **已修复（本仓部分）** | 配置导入仅校验两个字段即接收任意 app 路径与快捷键；信任存储无过期无吊销。导入现按字段域逐条校验并丢弃不可信条目，结果经既有 `CorruptedSettingsNotice` 内联上报；信任条目加 30 天过期。复核否决了第一版的纯 ASCII bundle id 限制——脚本编辑器导出的中文名 App 标识本就含中文，实测会让**已装在本机**的 App 配置归零；同时把 bundle id 不一致从丢弃改为降级提示（执行路径本来就会再判等，丢弃只销毁绑定不增加安全性）。Keychain 密钥对与远程指令逐帧认证需改私有仓库协议，**不在本仓实现**，残余风险已记录 | `AppSettings.swift`、`SettingsView.swift` |
 
 跨私有仓库的协议变更（A10 的信任改密钥、远程指令逐帧认证）不在本仓实现，只做本仓可收敛部分并记录。
+
+### 执行记录（实施 / 复核 / 验证）
+
+每项均由一个实施 Agent 修复、另一个未参与实施的复核 Agent 实跑验证命令并有否决权；否决过的项目退回重做后才提交。
+
+| 编号 | Commit | 实施 | 复核结论 | 测试手册 | 验证证据 |
+| --- | --- | --- | --- | --- | --- |
+| A1 | `27571c3` | 实施 Agent | **否决 1 次**：`corruptedSettingKeys` 无任何消费方，"无 UI"那一半没闭合；另纠正数量 8→10、并推翻"该项导致过用户配置丢失"的说法 | [`CorruptedSettingsNotice.md`](Testing/CorruptedSettingsNotice.md) | `grep -c 'try? JSONDecoder'` = 0；`SettingsCorruptionRecoveryTests.swift` 6 项 |
+| A2 | `858bb9c` | 实施 Agent | **否决 2 次**：① `verify-doubao-driver-pkg.sh` 仍断言旧的裸 `killall`，该脚本自身 `set -euo pipefail`，等于把被修的缺陷类型搬进了构建链；② `2>/dev/null` 吞掉 stderr，权限失败也会打印"服务未运行" | [`SplitInstallerArtifacts.md`](Testing/SplitInstallerArtifacts.md) | `build-driver-dmg.sh` 退出 0；`lsbom` 实测安装包 35 条、`Applications` 条目 **0**；PATH 注入必失败 `killall`/`pgrep` 后卸载脚本仍退出 0 |
+| A3 | `43467f1` | 实施 Agent | **否决 2 次**：① "零 `AUDIO DEFAULT_INPUT` 事件"为假，投影脚本把 5 个门禁条件中的 2 个写成乐观常量；② 按"首个 `=` 前缀"折叠会把 1586 行内容不同的消息错误合并——等于把 A6 缺陷推广到 220 类消息 | [`RuntimeLogGovernance.md`](Testing/RuntimeLogGovernance.md) | 真实 11 天日志投影：113242 → 53823 行（−52.5%）、21.49 → 10.59 MB（−50.7%）；改后内容改变型合并实测 0 |
+| A4 | `251d3f3` | 实施 Agent | **否决 1 次**：被删掉的 8 秒循环原本是睡眠唤醒后唯一的自愈路径，改后桥会停在 `.connecting` 且零待处理项；另发现 `.unauthorized` 分支同样死锁 | [`BluetoothAbsentRemoteReconnect.md`](Testing/BluetoothAbsentRemoteReconnect.md) | 缺席 1 小时连接尝试 **328 → 1**、24 小时 **7855 → 1**（由代码延迟推导）；负向对照：策略改回即 3 项失败 |
+| A5 | `044f69f` | 实施 Agent | 通过（复核另指出该修复顺带修好了手机路径 `VoiceFunctionKeyLatch` 永久按下） | [`VoiceDrainInterruptionRecovery.md`](Testing/VoiceDrainInterruptionRecovery.md) | 4 次负向对照均 `completionCount → 0`；`.draining` 兜底失效即红 |
+| A6 | `b0270f4` | 实施 Agent | **否决 1 次**（文档同步）：`TODO.md` 该行仍写"待开始" | 并入 [`HIDMappingReadinessRetry.md`](Testing/HIDMappingReadinessRetry.md) | 21 个 case 各有唯一 token；40 次按键由 40 行折叠为 1 行；去掉白名单即 2 项失败 |
+| A7 | `550e685`、`1f821f3` | 实施 Agent ×2 | 通过（第二轮复核纠正了 3 个被高估的数字：负向对照 issue 数、以及"独立参考解码"实际用的是同一个生产解码器） | 并入相关手册 | 11 项事件回放；33 项文本断言 → 65 项行为断言；7 次负向对照实测"旧绿新红" |
+| A8 | `b308287` | 实施 Agent | 通过。复核独立复现了关键结论：**单标 `@MainActor` 抓不到该缺陷**——普通闭包字面量赋给非 `@Sendable` 回调会静默继承隔离，`-strict-concurrency=complete` 也不报 | 无（无用户可见行为变化） | 负向对照：还原原缺陷即 `mainThreadFlags` 非空；`build-app.sh` 退出 0 |
+| A9 | `8b30824` | 实施 Agent | 通过。复核另查出**第二条**同样被误标通过的记录：`CustomApplicationFocus.md` 曾勾选"中文字号均不小于 12pt"，而该页当时正有 51 处 10–11pt | [`InterfaceFontAndLocaleCompliance.md`](Testing/InterfaceFontAndLocaleCompliance.md) | 53 处改由 token 保证；字号低于 12 即红；旧 `cardWidth` 恢复后 4 项几何测试红 |
+| A10 | `3a0bd82` | 实施 Agent | **否决 1 次**：纯 ASCII bundle id 限制会让**已装在本机**的中文名 App（脚本编辑器导出的 `com.apple.ScriptEditor.id.阿里内外`）配置归零，复核用真实已装 App 端到端证明 | [`ConfigurationImportValidation.md`](Testing/ConfigurationImportValidation.md) | 3 次负向对照分别 6/5/4 项红；右 Command 侧别位往返保持 `0x0010_0010` 与键码 `[54]` |
+
+共享验证输出（最后一次全量）：`swift test` 退出 0，**339 项 / 30 套**；`scripts/test.sh` 退出 0，`RESULT passed=42 failed=0`；`check-repository-boundaries.sh` 退出 0；`build-app.sh` / `verify-app.sh` / `build-dmg.sh` / `verify-dmg.sh` / `build-driver-dmg.sh` 均退出 0。
+
+**尚未验证（不得表述为已验收）**：10 项修复**全部没有真机验证**，界面也从未被渲染或截图。发布前的真机验收清单见上表各手册；`Release` 本身在真机验收通过前不发。
 
 
 - [ ] 拆分安装制品，修复 pkg 删除已安装 App（待真机验收）
