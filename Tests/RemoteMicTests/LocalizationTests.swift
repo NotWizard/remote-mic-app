@@ -199,6 +199,61 @@ struct LocalizationTests {
         }
     }
 
+    /// Every localization key the sources ask for must resolve in every language.
+    ///
+    /// The key-set parity check compares the two files against each other, so a key
+    /// deleted from *both* passes it. The approval-alert test closes that hole for
+    /// seven keys by asking the type for its own list. The other three hundred are
+    /// spelled inline at the call site, so the only way to know what the interface
+    /// asks for is to read the call sites.
+    ///
+    /// That makes this look like the source-text assertions this repository is
+    /// trying to get rid of, and it is worth being precise about the difference:
+    /// those assert that a chosen string still appears somewhere, and pass whether
+    /// or not anything works. This derives the *set of keys the app requests* and
+    /// then checks each one actually resolves. Renaming a key and its table entry
+    /// together keeps this green, which is the behaviour you want; deleting a table
+    /// entry while leaving the request turns it red, which is the user-visible bug.
+    @Test func everyLocalizationKeyTheInterfaceAsksForResolvesInEveryLanguage() throws {
+        let sourceDirectory = repositoryRoot.appendingPathComponent("Sources/RemoteMic")
+        let swiftFiles = try FileManager.default
+            .contentsOfDirectory(at: sourceDirectory, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "swift" }
+        #expect(!swiftFiles.isEmpty)
+
+        // The forms the app uses to name a key: SwiftUI `Text`, the localization
+        // store, and `LocalizedMessage`. A dotted lower-case identifier in one of
+        // those positions is a localization key.
+        let pattern = #"(?:Text\(|localization\.text\(|LocalizedMessage\()"# +
+            #""([a-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+)""#
+        let expression = try NSRegularExpression(pattern: pattern)
+
+        var requested: Set<String> = []
+        for file in swiftFiles {
+            let contents = try String(contentsOf: file, encoding: .utf8)
+            let range = NSRange(contents.startIndex..<contents.endIndex, in: contents)
+            expression.enumerateMatches(in: contents, range: range) { match, _, _ in
+                guard let match,
+                      let keyRange = Range(match.range(at: 1), in: contents)
+                else { return }
+                requested.insert(String(contents[keyRange]))
+            }
+        }
+
+        // If this floor ever fails, the scan stopped seeing call sites rather than
+        // the interface losing strings, and the test has quietly stopped working.
+        #expect(requested.count > 250, "only found \(requested.count) requested keys")
+
+        for directory in try sourceLocalizationDirectories() {
+            let table = try strings(at: directory.appendingPathComponent("Localizable.strings"))
+            let unresolved = requested.filter { table[$0] == nil }.sorted()
+            #expect(
+                unresolved.isEmpty,
+                "\(directory.lastPathComponent) would show these as raw identifiers: \(unresolved)"
+            )
+        }
+    }
+
     @Test func glossaryResourcesContainTheDocumentedTechnicalTerms() throws {
         for localization in ["en", "zh-Hans"] {
             let glossaryURL = repositoryRoot
