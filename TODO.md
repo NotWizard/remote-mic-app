@@ -2,7 +2,7 @@
 
 ## 代码审计整改台账（A1–A10）
 
-来源：2026-08-21 五领域并行代码审计。每项独立 commit，实施后由独立复核 Agent 实跑验证命令并有否决权。会话起始基线：`swift test` 247 项、`scripts/test.sh` 42 项；当前 `swift test` 361 项 / 33 套。
+来源：2026-08-21 五领域并行代码审计。每项独立 commit，实施后由独立复核 Agent 实跑验证命令并有否决权。会话起始基线：`swift test` 247 项、`scripts/test.sh` 42 项；当前 `swift test` 367 项 / 33 套。
 
 | 编号 | 状态 | 问题 | 主要位置 |
 | --- | --- | --- | --- |
@@ -36,7 +36,7 @@
 | A9 | `8b30824` | 实施 Agent | 通过。复核另查出**第二条**同样被误标通过的记录：`CustomApplicationFocus.md` 曾勾选"中文字号均不小于 12pt"，而该页当时正有 51 处 10–11pt | [`InterfaceFontAndLocaleCompliance.md`](Testing/InterfaceFontAndLocaleCompliance.md) | 53 处改由 token 保证；字号低于 12 即红；旧 `cardWidth` 恢复后 4 项几何测试红 |
 | A10 | `3a0bd82` | 实施 Agent | **否决 1 次**：纯 ASCII bundle id 限制会让**已装在本机**的中文名 App（脚本编辑器导出的 `com.apple.ScriptEditor.id.阿里内外`）配置归零，复核用真实已装 App 端到端证明 | [`ConfigurationImportValidation.md`](Testing/ConfigurationImportValidation.md) | 3 次负向对照分别 6/5/4 项红；右 Command 侧别位往返保持 `0x0010_0010` 与键码 `[54]` |
 
-共享验证输出（最后一次全量）：`swift test` 退出 0，**361 项 / 33 套**；`scripts/test.sh` 退出 0，`RESULT passed=42 failed=0`；`check-repository-boundaries.sh` 退出 0；`build-app.sh` / `verify-app.sh` / `build-dmg.sh` / `verify-dmg.sh` / `build-driver-dmg.sh` 均退出 0。
+共享验证输出（最后一次全量）：`swift test` 退出 0，**367 项 / 33 套**；`scripts/test.sh` 退出 0，`RESULT passed=42 failed=0`；`check-repository-boundaries.sh` 退出 0；`build-app.sh` / `verify-app.sh` / `build-dmg.sh` / `verify-dmg.sh` / `build-driver-dmg.sh` 均退出 0。
 
 **尚未验证（不得表述为已验收）**：10 项修复**全部没有真机验证**，界面也从未被渲染或截图。发布前的真机验收清单见上表各手册；`Release` 本身在真机验收通过前不发。
 
