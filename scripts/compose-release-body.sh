@@ -30,11 +30,17 @@ if ! print -r -- "$en_body" | /usr/bin/grep -q '^- '; then
   exit 1
 fi
 
-print "## 更新内容"
-print
 print -r -- "$zh_body"
-print -r -- "---"
 print
-print "## What's New"
+# The two halves are divided by a thematic break and nothing else. They used to
+# be wrapped in `## 更新内容` / `## What's New`, but those are `##` siblings of the
+# four sections Release_Notes_Guidelines.md fixes, so the first heading a reader
+# met was the wrapper and the `## ⚠️` heads-up was no longer pinned to the top.
+# A rule marks the language boundary without joining the heading outline, and it
+# leaves each half starting directly with its own first mandated section.
+#
+# zsh's `print` reads a leading dash as options, so the rule needs `--` or the
+# whole line disappears and the two languages run together.
+print -r -- "---"
 print
 print -r -- "$en_body"
