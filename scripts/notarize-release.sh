@@ -226,11 +226,13 @@ stop_parallel_job() {
 extract_release_notes() {
   local source_file="$1"
   local destination_file="$2"
-  /usr/bin/awk -v version="$VERSION" '
-    index($0, "## " version) == 1 { active = 1; next }
-    active && /^## / { exit }
-    active && /^- / { print }
-  ' "$source_file" > "$destination_file"
+  # The Sparkle notes are plain text, so only the list items are kept. The
+  # extraction itself is shared with the GitHub body instead of copied: the copy
+  # that used to live here matched before it exited, so `1.8.25` pulled every
+  # `1.8.25-fork.*` entry into one update note, and it also stopped at the
+  # `## ⚠️ / 🎉 / ✨ / 🐛` sections inside a single entry.
+  "$ROOT/scripts/extract-release-notes.sh" \
+    "$VERSION" "$source_file" --bullets-only > "$destination_file"
   rg -q '^- ' "$destination_file"
 }
 

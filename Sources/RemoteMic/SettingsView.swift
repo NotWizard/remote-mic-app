@@ -3262,6 +3262,25 @@ private struct ReleaseHistorySheet: View {
             return nil
         }
 
+        let sections = ReleaseHistorySection.parse(markdown: markdown)
+        return sections.isEmpty ? nil : sections
+    }
+}
+
+struct ReleaseHistorySection: Identifiable {
+    let title: String
+    let entries: [String]
+
+    var id: String { title }
+
+    /// One card per version, listing that version's bullets.
+    ///
+    /// A version entry is itself divided into the `## ⚠️ / 🎉 / ✨ / 🐛` sections
+    /// that `Release_Notes_Guidelines.md` requires of the GitHub release body.
+    /// Those group one entry's bullets, so they must not open another card and
+    /// must not split one version across several. Version headings always begin
+    /// with a digit; every other `## ` heading is inner structure here.
+    static func parse(markdown: String) -> [ReleaseHistorySection] {
         var sections: [ReleaseHistorySection] = []
         var title: String?
         var entries: [String] = []
@@ -3274,8 +3293,10 @@ private struct ReleaseHistorySheet: View {
         for rawLine in markdown.components(separatedBy: .newlines) {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             if line.hasPrefix("## ") {
+                let heading = String(line.dropFirst(3))
+                guard heading.first?.isNumber == true else { continue }
                 appendSection()
-                title = String(line.dropFirst(3))
+                title = heading
                 entries = []
             } else if line.hasPrefix("- "), title != nil {
                 entries.append(String(line.dropFirst(2)))
@@ -3283,15 +3304,8 @@ private struct ReleaseHistorySheet: View {
         }
         appendSection()
 
-        return sections.isEmpty ? nil : sections
+        return sections
     }
-}
-
-private struct ReleaseHistorySection: Identifiable {
-    let title: String
-    let entries: [String]
-
-    var id: String { title }
 }
 
 private final class WindowDragNSView: NSView {

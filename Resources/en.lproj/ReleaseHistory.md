@@ -2,8 +2,20 @@
 
 ## 1.8.25-fork.4 (this fork)
 
-- Trusted phones and watches now expire after 30 days. Until now a device stayed trusted forever, so a phone you lent out, sold, or lost could still connect to your Mac and press keys. After it expires the confirmation prompt appears again with a two-digit code; there is nothing to do in advance. To revoke a device immediately, clear trusted devices in settings as before.
+## ⚠️ Heads-up
+
+- **Trusted phones and watches now expire after 30 days.**
+- **Why this changed**: until now a device stayed trusted forever. A phone you lent out, sold, or lost could still connect to your Mac and press keys.
+- **What the new rule is**: trust for each phone or watch lasts 30 days. Connecting after it expires brings back the confirmation prompt with a two-digit code, just like the first time.
+- **What you should do**: there is nothing to do in advance — confirm once more when the prompt returns. To revoke a device immediately, clear trusted devices in settings as before, without waiting for it to expire.
+- Automated tests for every change in this release pass. **Verification on real hardware is not complete**: overnight reconnection, recovery from an interrupted recording, and the interface text sizes have not been confirmed on a real device or in a real window.
+
+## ✨ Improvements
+
 - While the remote is away — taken home, or left in another room — the app no longer retries the connection every 11 seconds. The remote connects on its own when it comes back in range, and the attempt is renewed once after the Mac wakes.
+
+## 🐛 Bug fixes
+
 - Fixed changing an audio input or output device halfway through dictation killing the voice key until the app was quit and reopened.
 - Fixed smaller Chinese text rendering at 10–11 point: button descriptions, status lines, and statistics are now never below 12.
 - Fixed the prompt asking you to allow a phone, watch, or browser still appearing in Chinese when the system language is English.
@@ -13,7 +25,6 @@
 - A settings file that cannot be read no longer restores defaults in silence. The original is kept, the page names which items were affected, and the notice clears once you set them again.
 - Importing a configuration from another Mac no longer drops application bindings this Mac cannot resolve without saying so; they are listed on the button mapping page.
 - The runtime log had no size limit — 21 MB over 11 days in practice — and was readable by other accounts on the Mac. It is now capped and readable only by you.
-- Automated tests for every change in this release pass. **Verification on real hardware is not complete**: overnight reconnection, recovery from an interrupted recording, and the interface text sizes have not been confirmed on a real device or in a real window.
 
 ## 1.8.25-fork.3 (this fork)
 
