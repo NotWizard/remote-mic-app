@@ -4,9 +4,11 @@ import Testing
 
 /// The release body is built by extracting one version's entry out of the release
 /// history. Versions in this repository are prefixes of each other — `1.8.25`,
-/// `1.8.25-fork.2`, `1.8.25-fork.3`, `1.8.25-fork.4` all coexist — and the app's
-/// own version string is the bare `1.8.25`, so prefix handling is what decides
-/// whether a release describes itself or four releases at once.
+/// `1.8.25-fork.2`, `1.8.25-fork.3`, `1.8.25-fork.4` all coexist, and so do
+/// `1.8.1`/`1.8.19` and `1.6.1`/`1.6.11` — so the match has to be exact. A prefix
+/// test returned the earliest heading that merely started with the version asked
+/// for, which silently paired four real versions with another release's notes and
+/// made the entries they shadowed unreachable.
 ///
 /// These tests drive the real `scripts/extract-release-notes.sh` with real bytes.
 @Suite("Release notes extraction")
@@ -33,6 +35,34 @@ struct ReleaseNotesExtractionTests {
         bulletsOnly: Bool = false,
         environment: [String: String]? = nil
     ) throws -> ExtractionResult {
+        try runExtraction(
+            arguments: { path in
+                [version, path] + (bulletsOnly ? ["--bullets-only"] : [])
+            },
+            history: history,
+            environment: environment
+        )
+    }
+
+    /// `--newest-version` asks which release the file describes as newest, which
+    /// is what publish-release.sh and notarize-release.sh compare their version
+    /// against.
+    private func newestVersion(
+        of history: String,
+        environment: [String: String]? = nil
+    ) throws -> ExtractionResult {
+        try runExtraction(
+            arguments: { path in ["--newest-version", path] },
+            history: history,
+            environment: environment
+        )
+    }
+
+    private func runExtraction(
+        arguments: (String) -> [String],
+        history: String,
+        environment: [String: String]?
+    ) throws -> ExtractionResult {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("ReleaseNotesExtraction-\(UUID().uuidString)")
         try FileManager.default.createDirectory(
@@ -48,9 +78,7 @@ struct ReleaseNotesExtractionTests {
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = [
             repositoryRoot.appendingPathComponent("scripts/extract-release-notes.sh").path,
-            version,
-            historyURL.path,
-        ] + (bulletsOnly ? ["--bullets-only"] : [])
+        ] + arguments(historyURL.path)
         if let environment { process.environment = environment }
         let output = Pipe()
         let errors = Pipe()
@@ -106,18 +134,28 @@ struct ReleaseNotesExtractionTests {
 
     """
 
-    @Test func theBareVersionStopsAtTheNextHeadingInsteadOfSwallowingEveryForkEntry()
+    @Test func theBareVersionResolvesToItsOwnEntryNotTheForkSharingItsPrefix()
         throws
     {
         let notes = try extract(version: "1.8.25", from: Self.prefixSharingHistory)
 
-        #expect(notes.contains("Newest entry only"))
-        // Each of these used to land in the same release body, because a heading
-        // sharing the prefix re-matched and skipped the stop rule.
+        // `## 1.8.25（预发布）` is the only heading that names 1.8.25. Under the
+        // prefix test the three fork headings came first, so this lookup returned
+        // fork.4's notes and the entry below could not be reached at all.
+        #expect(notes.contains("Upstream entry"))
+        #expect(!notes.contains("Newest entry only"))
         #expect(!notes.contains("Older fork entry"))
         #expect(!notes.contains("Even older fork entry"))
-        #expect(!notes.contains("Upstream entry"))
         #expect(!notes.contains("## "))
+    }
+
+    /// The requested version is compared against the heading with its label
+    /// removed, so `1.8.25` reaches `## 1.8.25（预发布）` while the shorter `1.8.2`
+    /// reaches nothing here — under the prefix test both returned fork.4.
+    @Test func aShorterVersionThatIsOnlyAPrefixMatchesNothing() throws {
+        let notes = try extract(version: "1.8.2", from: Self.prefixSharingHistory)
+
+        #expect(notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     @Test func anExactForkVersionExtractsOnlyItsOwnEntry() throws {
@@ -129,13 +167,94 @@ struct ReleaseNotesExtractionTests {
         #expect(notes.contains("Older fork entry"))
         #expect(!notes.contains("Newest entry only"))
         #expect(!notes.contains("Even older fork entry"))
+        #expect(!notes.contains("Upstream entry"))
     }
 
+    @Test func theNewestForkVersionExtractsOnlyItsOwnEntry() throws {
+        let notes = try extract(
+            version: "1.8.25-fork.4",
+            from: Self.prefixSharingHistory
+        )
+
+        #expect(notes.contains("Newest entry only"))
+        #expect(!notes.contains("Older fork entry"))
+        #expect(!notes.contains("Even older fork entry"))
+        #expect(!notes.contains("Upstream entry"))
+    }
+
+    /// The last entry has no heading after it, so it ends at EOF rather than at a
+    /// boundary. That is still one entry, not the rest of the file.
     @Test func theLastEntryInTheFileIsStillExtracted() throws {
-        let notes = try extract(version: "1.8.25（预发布）", from: Self.prefixSharingHistory)
+        let notes = try extract(version: "1.8.25", from: Self.prefixSharingHistory)
 
         #expect(notes.contains("Upstream entry"))
         #expect(!notes.contains("Older fork entry"))
+    }
+
+    /// The label after a version number is decoration, not part of the version,
+    /// so the heading text as written is not a lookup key. The callers pass the
+    /// version from Info.plist, which never carries a label.
+    @Test func theHeadingLabelIsNotPartOfTheLookupKey() throws {
+        for key in ["1.8.25（预发布）", "1.8.25 (Pre-release)", "1.8.25-fork.4（本分支）"] {
+            let notes = try extract(version: key, from: Self.prefixSharingHistory)
+
+            #expect(notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "\(key)")
+        }
+    }
+
+    /// Both bracket pairs the two shipping files use, plus an undecorated heading,
+    /// resolve from the bare version. A label is optional, never required.
+    @Test func bothLabelStylesAndNoLabelAtAllResolveFromTheBareVersion() throws {
+        let history = """
+        # Version History
+
+        ## 2.0.0（本分支）
+
+        - Fullwidth label entry
+
+        ## 1.9.0 (this fork)
+
+        - ASCII label entry
+
+        ## 1.8.0
+
+        - Undecorated entry
+
+        """
+
+        #expect(try extract(version: "2.0.0", from: history)
+            .contains("Fullwidth label entry"))
+        #expect(try extract(version: "1.9.0", from: history)
+            .contains("ASCII label entry"))
+        let undecorated = try extract(version: "1.8.0", from: history)
+        #expect(undecorated.contains("Undecorated entry"))
+        #expect(!undecorated.contains("label entry"))
+    }
+
+    /// The newest entry is what the file says is being released, and
+    /// publish-release.sh and notarize-release.sh both refuse a version that is
+    /// not it. The rule for "what version does this heading name" is shared with
+    /// the match above rather than reimplemented in those scripts.
+    @Test func theNewestVersionModeReportsTheBareVersionOfTheFirstHeading() throws {
+        let result = try newestVersion(of: Self.prefixSharingHistory)
+
+        #expect(result.status == 0)
+        #expect(result.notes.trimmingCharacters(in: .whitespacesAndNewlines)
+            == "1.8.25-fork.4")
+    }
+
+    @Test func theNewestVersionModeMatchesBothShippingFiles() throws {
+        for locale in ["zh-Hans", "en"] {
+            let history = try shippingHistory(locale: locale)
+            let result = try newestVersion(of: history)
+
+            #expect(result.status == 0, "\(locale)")
+            #expect(
+                result.notes.trimmingCharacters(in: .whitespacesAndNewlines)
+                    == (try Self.topVersion(of: history)),
+                "\(locale)"
+            )
+        }
     }
 
     @Test func aVersionWithNoEntryYieldsNothingRatherThanSomebodyElsesNotes() throws {
@@ -464,7 +583,7 @@ struct ReleaseNotesExtractionTests {
 
     @Test func bulletsOnlyStillRefusesToCrossIntoTheNextVersion() throws {
         let notes = try extract(
-            version: "1.8.25",
+            version: "1.8.25-fork.4",
             from: Self.prefixSharingHistory,
             bulletsOnly: true
         )
@@ -473,6 +592,22 @@ struct ReleaseNotesExtractionTests {
         #expect(!notes.contains("Older fork entry"))
         #expect(!notes.contains("Even older fork entry"))
         #expect(!notes.contains("Upstream entry"))
+    }
+
+    /// The Sparkle path is the one that asks with the bare Info.plist version, so
+    /// the exact match has to hold in this mode too: the update notes an installed
+    /// app displays were the first thing the prefix test got wrong.
+    @Test func bulletsOnlyMatchesTheVersionExactlyAsWell() throws {
+        let notes = try extract(
+            version: "1.8.25",
+            from: Self.prefixSharingHistory,
+            bulletsOnly: true
+        )
+
+        #expect(notes.contains("Upstream entry"))
+        #expect(!notes.contains("Newest entry only"))
+        #expect(!notes.contains("Older fork entry"))
+        #expect(!notes.contains("Even older fork entry"))
     }
 
     /// The publish script requires at least one bullet in the generated notes, so
@@ -548,15 +683,25 @@ struct ReleaseNotesExtractionTests {
         )
     }
 
-    /// The heading of the entry a release would ship next, exactly as written.
+    /// The version named by the newest entry, with the trailing label removed, as
+    /// the callers pass it. Computed here independently of the script under test.
     private static func topVersion(of history: String) throws -> String {
-        try #require(
+        let heading = try #require(
             history
                 .split(separator: "\n")
                 .first { $0.hasPrefix("## ") }?
                 .dropFirst(3)
                 .trimmingCharacters(in: .whitespaces)
         )
+        for (start, end) in [("（", "）"), ("(", ")")] {
+            guard heading.hasSuffix(end),
+                  let position = heading.range(of: start),
+                  position.lowerBound != heading.startIndex
+            else { continue }
+            return String(heading[..<position.lowerBound])
+                .trimmingCharacters(in: .whitespaces)
+        }
+        return heading
     }
 
     /// Everything between the newest version heading and the next one, read
@@ -640,7 +785,7 @@ struct ReleaseNotesExtractionTests {
     /// full English text after it, not line-by-line alternation.
     @Test func theReleaseBodyCarriesBothLanguagesWithChineseFirst() throws {
         let result = try compose(
-            version: "1.8.25",
+            version: "1.8.25-fork.4",
             chinese: Self.prefixSharingHistory,
             english: Self.englishHistory
         )
@@ -655,6 +800,7 @@ struct ReleaseNotesExtractionTests {
         // Neither half may drag in a neighbouring version.
         #expect(!result.body.contains("Older fork entry"))
         #expect(!result.body.contains("Older English entry"))
+        #expect(!result.body.contains("Upstream entry"))
     }
 
     @Test func aMissingEnglishEntryFailsInsteadOfShippingChineseOnly() throws {
@@ -665,6 +811,9 @@ struct ReleaseNotesExtractionTests {
         )
 
         #expect(result.status != 0)
+        // The Chinese half of 1.8.25 does exist, so this is the half-translated
+        // body the gate has to stop.
+        #expect(!result.body.contains("Upstream entry"))
         #expect(!result.body.contains("Newest entry only"))
     }
 
@@ -706,19 +855,13 @@ struct ReleaseNotesExtractionTests {
                 .appendingPathComponent("Resources/en.lproj/ReleaseHistory.md"),
             encoding: .utf8
         )
-        let version = try #require(
-            chinese
-                .split(separator: "\n")
-                .first { $0.hasPrefix("## ") }?
-                .dropFirst(3)
-                .trimmingCharacters(in: .whitespaces)
-        )
-        // The Chinese heading carries a localized suffix, so compose on the shared
-        // numeric prefix the publish script actually passes.
-        let numericVersion = String(version.prefix { $0.isNumber || $0 == "." || $0 == "-" || $0.isLetter })
+        // The Chinese heading carries a localized label, so compose on the bare
+        // version the publish script actually passes.
+        let version = try Self.topVersion(of: chinese)
+        #expect(version == (try Self.topVersion(of: english)))
 
         let result = try compose(
-            version: numericVersion,
+            version: version,
             chinese: chinese,
             english: english
         )
@@ -848,5 +991,553 @@ struct ReleaseHistorySheetParsingTests {
             #expect(sections.first?.entries.count == bulletsInNewestEntry)
             #expect(bulletsInNewestEntry > 0)
         }
+    }
+}
+
+/// `publish-release.sh` decides three things a reader sees: the tag, the title and
+/// the body. All three are derived from `CFBundleShortVersionString`, and nothing
+/// used to compare that version against the release history, so a fork still
+/// carrying the upstream version number published an upstream tag, a title with no
+/// keywords in it, and — because version numbers here are prefixes of each other —
+/// another release's notes, with every existing gate green.
+///
+/// These tests build a throwaway ROOT (`scripts/` plus `Resources/`) and run the
+/// real script in it. Each guard is also exercised with that guard removed from a
+/// copy of the script: a test that still passes against the mutated copy is not
+/// testing the guard, so the mutated run is asserted to produce the bad outcome
+/// the guard exists to prevent.
+@Suite("Release publish identity gates")
+struct ReleasePublishIdentityTests {
+    private var repositoryRoot: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
+    private struct PublishRun {
+        var status: Int32
+        var output: String
+        var errors: String
+    }
+
+    private struct GuardTextMissing: Error {
+        var text: String
+    }
+
+    private typealias SourcePatch = (find: String, replace: String)
+
+    /// A history whose newest entry is the fork release and whose older entries
+    /// include the upstream version the fork's number is a prefix of, plus one much
+    /// older release used for the environment-tag path.
+    private static func history(
+        newest: String,
+        upstream: String,
+        older: String
+    ) -> String {
+        """
+        # 版本历史
+
+        ## \(newest)
+
+        - Newest entry bullet
+
+        ## \(upstream)
+
+        - Upstream entry bullet
+
+        ## \(older)
+
+        - Older release bullet
+
+        """
+    }
+
+    private static let chineseHistory = history(
+        newest: "1.8.25-fork.4（本分支）",
+        upstream: "1.8.25（预发布）",
+        older: "1.7.5"
+    )
+    private static let englishHistory = history(
+        newest: "1.8.25-fork.4 (this fork)",
+        upstream: "1.8.25 (Pre-release)",
+        older: "1.7.5"
+    )
+    /// `RELEASE_TAG` still has to match `^v[0-9]+\.[0-9]+\.[0-9]+$`, which is
+    /// checked before these gates and which no `-fork.N` version can satisfy, so
+    /// the title fixtures use a version a tag can currently carry.
+    private static let releasableChineseHistory = history(
+        newest: "1.9.0（本分支）",
+        upstream: "1.8.25（预发布）",
+        older: "1.7.5"
+    )
+    private static let releasableEnglishHistory = history(
+        newest: "1.9.0 (this fork)",
+        upstream: "1.8.25 (Pre-release)",
+        older: "1.7.5"
+    )
+
+    /// A run whose version, tag and release history all agree, so it reaches the
+    /// title gate.
+    private func runReleasablePublish(
+        keywords: String? = nil,
+        publishPatch: SourcePatch? = nil
+    ) throws -> PublishRun {
+        try runPublish(
+            plistVersion: "1.9.0",
+            chinese: Self.releasableChineseHistory,
+            english: Self.releasableEnglishHistory,
+            keywords: keywords,
+            publishPatch: publishPatch
+        )
+    }
+
+    /// The two keys the release scripts read out of Resources/Info.plist.
+    private static func infoPlist(version: String) -> String {
+        """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
+        "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+        \t<key>CFBundleShortVersionString</key>
+        \t<string>\(version)</string>
+        \t<key>CFBundleVersion</key>
+        \t<string>200</string>
+        </dict>
+        </plist>
+
+        """
+    }
+
+    private func applying(_ patch: SourcePatch?, to source: String) throws -> String {
+        guard let patch else { return source }
+        guard source.contains(patch.find) else { throw GuardTextMissing(text: patch.find) }
+        return source.replacingOccurrences(of: patch.find, with: patch.replace)
+    }
+
+    private func copyScript(
+        _ name: String,
+        into scripts: URL,
+        patch: SourcePatch? = nil
+    ) throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("scripts/\(name)"),
+            encoding: .utf8
+        )
+        let destination = scripts.appendingPathComponent(name)
+        try applying(patch, to: source).write(to: destination, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: destination.path
+        )
+    }
+
+    private func runPublish(
+        mode: String = "prerelease",
+        plistVersion: String,
+        chinese: String = ReleasePublishIdentityTests.chineseHistory,
+        english: String = ReleasePublishIdentityTests.englishHistory,
+        keywords: String? = nil,
+        releaseTag: String? = nil,
+        publishPatch: SourcePatch? = nil
+    ) throws -> PublishRun {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ReleasePublishIdentity-\(UUID().uuidString)")
+        let scripts = root.appendingPathComponent("scripts")
+        let resources = root.appendingPathComponent("Resources")
+        for directory in [
+            scripts,
+            resources.appendingPathComponent("zh-Hans.lproj"),
+            resources.appendingPathComponent("en.lproj"),
+        ] {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+        }
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try copyScript("publish-release.sh", into: scripts, patch: publishPatch)
+        try copyScript("compose-release-body.sh", into: scripts)
+        try copyScript("extract-release-notes.sh", into: scripts)
+        try Self.infoPlist(version: plistVersion).write(
+            to: resources.appendingPathComponent("Info.plist"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try chinese.write(
+            to: resources.appendingPathComponent("zh-Hans.lproj/ReleaseHistory.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try english.write(
+            to: resources.appendingPathComponent("en.lproj/ReleaseHistory.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        var environment = ProcessInfo.processInfo.environment
+        // Whatever the shell running the tests happens to export must not decide
+        // the outcome of a gate about missing values.
+        environment.removeValue(forKey: "RELEASE_TAG")
+        environment.removeValue(forKey: "RELEASE_TITLE_KEYWORDS")
+        environment["DRY_RUN"] = "1"
+        if let keywords { environment["RELEASE_TITLE_KEYWORDS"] = keywords }
+        if let releaseTag { environment["RELEASE_TAG"] = releaseTag }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = [scripts.appendingPathComponent("publish-release.sh").path, mode]
+        process.environment = environment
+        let output = Pipe()
+        let errors = Pipe()
+        process.standardOutput = output
+        process.standardError = errors
+        try process.run()
+        let outputData = output.fileHandleForReading.readDataToEndOfFile()
+        let errorData = errors.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return PublishRun(
+            status: process.terminationStatus,
+            output: String(decoding: outputData, as: UTF8.self),
+            errors: String(decoding: errorData, as: UTF8.self)
+        )
+    }
+
+    /// The gate invocation for the Info.plist version, as one line, so removing it
+    /// is a precise negative control rather than a rewrite of the script.
+    private static let historyGuardCall =
+        "require_release_history_entry \"$VERSION\" \"Resources/Info.plist CFBundleShortVersionString\""
+    private static let keywordGuardCondition =
+        "if [[ -z \"${RELEASE_TITLE_KEYWORDS//[[:space:]]/}\" ]]; then"
+
+    // MARK: - The version being released must be the release the notes describe
+
+    @Test func aVersionThatIsNotTheNewestReleaseHistoryEntryIsRefused() throws {
+        let run = try runPublish(plistVersion: "1.8.25", keywords: "a、b、c")
+
+        #expect(run.status != 0)
+        #expect(run.errors.contains("1.8.25 is not the newest release-history entry"))
+        // The message has to let a human fix it without reading the script: what
+        // was looked for, where it was looked for, and what is actually there.
+        #expect(run.errors.contains("version looked for: 1.8.25"))
+        #expect(run.errors.contains("Resources/Info.plist CFBundleShortVersionString"))
+        #expect(run.errors.contains("Resources/zh-Hans.lproj/ReleaseHistory.md"))
+        #expect(run.errors.contains("newest entry present: 1.8.25-fork.4"))
+        // Refused before anything is resolved, staged or created.
+        #expect(!run.output.contains("RELEASE TITLE:"))
+        #expect(!run.output.contains("PUBLISH DRY RUN PASS"))
+    }
+
+    /// Negative control for the test above: with the gate call removed, the same
+    /// inputs sail past and the release resolves a title for a version the release
+    /// history does not describe.
+    @Test func removingTheHistoryGateLetsTheMismatchedVersionThrough() throws {
+        let run = try runPublish(
+            plistVersion: "1.8.25",
+            keywords: "a、b、c",
+            publishPatch: (
+                find: Self.historyGuardCall,
+                replace: ": negative control — history gate removed"
+            )
+        )
+
+        #expect(!run.errors.contains("is not the newest release-history entry"))
+        #expect(run.output.contains("RELEASE TITLE: v1.8.25: a、b、c"))
+    }
+
+    @Test func aVersionWithNoReleaseHistoryEntryAtAllIsRefused() throws {
+        let run = try runPublish(plistVersion: "9.9.9", keywords: "a、b、c")
+
+        #expect(run.status != 0)
+        #expect(run.errors.contains("no release-history entry names 9.9.9"))
+        #expect(run.errors.contains("newest entry present: 1.8.25-fork.4"))
+        #expect(!run.output.contains("RELEASE TITLE:"))
+    }
+
+    /// An entry written in one language only is still a mismatch: the body is
+    /// bilingual, so both files are checked and the failing one is named.
+    @Test func theEnglishHistoryIsCheckedAsWell() throws {
+        let run = try runPublish(
+            plistVersion: "1.9.0",
+            chinese: Self.releasableChineseHistory,
+            english: Self.history(
+                newest: "1.8.25 (Pre-release)",
+                upstream: "1.8.20 (Pre-release)",
+                older: "1.7.5"
+            ),
+            keywords: "a、b、c"
+        )
+
+        #expect(run.status != 0)
+        #expect(run.errors.contains("no release-history entry names 1.9.0"))
+        #expect(run.errors.contains("Resources/en.lproj/ReleaseHistory.md"))
+        #expect(run.errors.contains("newest entry present: 1.8.25"))
+        #expect(!run.errors.contains("zh-Hans"))
+    }
+
+    /// `RELEASE_TAG` is read from the environment, and in `promote` mode it is the
+    /// only thing that names the release, so it gets the same check with its own
+    /// origin in the message.
+    @Test func aReleaseTagFromTheEnvironmentCannotBypassTheCheck() throws {
+        let run = try runPublish(
+            mode: "promote",
+            plistVersion: "1.8.25-fork.4",
+            releaseTag: "v1.7.5"
+        )
+
+        #expect(run.status != 0)
+        #expect(run.errors.contains("1.7.5 is not the newest release-history entry"))
+        #expect(run.errors.contains("version looked for: 1.7.5 (from RELEASE_TAG)"))
+        #expect(run.errors.contains("newest entry present: 1.8.25-fork.4"))
+    }
+
+    /// `RELEASE_TAG` is still required to look like `vX.Y.Z`, and that check runs
+    /// before these gates, so a `-fork.N` version cannot be published at all yet.
+    /// Which version string and tag this fork releases under is the release
+    /// author's decision; this records that the decision is still open, and that
+    /// the tooling stops instead of tagging something unintended in the meantime.
+    @Test func aForkStyleVersionIsStoppedByTheExistingTagRule() throws {
+        let run = try runPublish(
+            plistVersion: "1.8.25-fork.4",
+            keywords: "信任期限、录音恢复、界面字号"
+        )
+
+        #expect(run.status != 0)
+        #expect(run.errors.contains("RELEASE_TAG must be a stable semantic version tag"))
+        #expect(!run.output.contains("RELEASE TITLE:"))
+        #expect(!run.output.contains("PUBLISH DRY RUN PASS"))
+    }
+
+    // MARK: - The release title follows Release_Notes_Guidelines.md
+
+    @Test func aMissingKeywordListIsRefusedRatherThanTitledGenerically() throws {
+        let run = try runReleasablePublish()
+
+        #expect(run.status != 0)
+        #expect(run.errors.contains("RELEASE_TITLE_KEYWORDS is required"))
+        #expect(run.errors.contains("Release_Notes_Guidelines.md"))
+        #expect(!run.output.contains("RELEASE TITLE:"))
+    }
+
+    @Test func aBlankKeywordListIsRefusedToo() throws {
+        let run = try runReleasablePublish(keywords: "   ")
+
+        #expect(run.status != 0)
+        #expect(run.errors.contains("RELEASE_TITLE_KEYWORDS is required"))
+        #expect(!run.output.contains("RELEASE TITLE:"))
+    }
+
+    /// Negative control: with the requirement removed, the keywords being absent
+    /// produces exactly the silently generic title the guard exists to stop.
+    @Test func removingTheKeywordRequirementProducesAGenericTitle() throws {
+        let run = try runReleasablePublish(
+            publishPatch: (find: Self.keywordGuardCondition, replace: "if false; then")
+        )
+
+        #expect(!run.errors.contains("RELEASE_TITLE_KEYWORDS is required"))
+        #expect(run.output.contains("RELEASE TITLE: v1.9.0: "))
+    }
+
+    @Test func theTitleIsTheVersionFollowedByTheKeywords() throws {
+        let run = try runReleasablePublish(keywords: "信任期限、录音恢复、界面字号")
+
+        #expect(run.output.contains("RELEASE TITLE: v1.9.0: 信任期限、录音恢复、界面字号"))
+        // The title the guidelines rejected: no keywords, and not even a `v`.
+        #expect(!run.output.contains("Remote Mic 1.9.0"))
+        #expect(!run.errors.contains("refusing to publish"))
+    }
+
+    @Test func keywordsThatAlreadyCarryTheVersionOrAnH1AreRefused() throws {
+        for keywords in ["v1.9.0: 信任期限、录音恢复、界面字号", "# 信任期限、录音恢复、界面字号"] {
+            let run = try runReleasablePublish(keywords: keywords)
+
+            #expect(run.status != 0, "\(keywords)")
+            #expect(
+                run.errors.contains("RELEASE_TITLE_KEYWORDS must be the keywords only"),
+                "\(keywords)"
+            )
+            #expect(!run.output.contains("RELEASE TITLE:"), "\(keywords)")
+        }
+    }
+
+    @Test func aMultiLineKeywordListIsRefused() throws {
+        let run = try runReleasablePublish(keywords: "信任期限、录音恢复\n# 界面字号")
+
+        #expect(run.status != 0)
+        #expect(run.errors.contains("RELEASE_TITLE_KEYWORDS must be a single line"))
+        #expect(!run.output.contains("RELEASE TITLE:"))
+    }
+
+    // MARK: - The signed Sparkle notes name the same release
+
+    /// `notarize-release.sh` bakes `$VERSION`'s bullets into the Sparkle notes and
+    /// the appcast, which an installed app displays when it offers the update. Its
+    /// only check was `rg -q '^- '`, which any non-empty entry satisfies, so a
+    /// mismatched version handed the updater another release's notes and signed
+    /// them. The refusal has to come before the build, not after.
+    @Test func notarizingRefusesAVersionThatIsNotTheNewestEntry() throws {
+        let run = try runNotarize(plistVersion: "1.8.25")
+
+        #expect(run.status != 0)
+        #expect(run.errors.contains("1.8.25 is not the newest release-history entry"))
+        #expect(run.errors.contains("Resources/zh-Hans.lproj/ReleaseHistory.md"))
+        #expect(run.errors.contains("newest entry present: 1.8.25-fork.4"))
+    }
+
+    /// Negative control: without the gate the same mismatch gets past this point,
+    /// and the next thing to stop it is a missing Sparkle key rather than anything
+    /// about which release is being described.
+    @Test func removingTheNotarizeGateLetsTheMismatchedVersionThrough() throws {
+        let run = try runNotarize(
+            plistVersion: "1.8.25",
+            patch: (
+                find: #"if [[ "$GENERATE_SPARKLE_UPDATE" == "1" ]]; then"#,
+                replace: "if false; then"
+            )
+        )
+
+        #expect(!run.errors.contains("is not the newest release-history entry"))
+    }
+
+    private func runNotarize(
+        plistVersion: String,
+        patch: SourcePatch? = nil
+    ) throws -> PublishRun {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ReleaseNotarizeIdentity-\(UUID().uuidString)")
+        let scripts = root.appendingPathComponent("scripts")
+        let resources = root.appendingPathComponent("Resources")
+        let variants = root.appendingPathComponent("packaging/release-variants")
+        for directory in [
+            scripts,
+            variants,
+            resources.appendingPathComponent("zh-Hans.lproj"),
+            resources.appendingPathComponent("en.lproj"),
+        ] {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+        }
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try copyScript("notarize-release.sh", into: scripts, patch: patch)
+        try copyScript("release-variant.sh", into: scripts)
+        try copyScript("extract-release-notes.sh", into: scripts)
+        for name in ["apple-silicon.plist", "intel.plist"] {
+            try FileManager.default.copyItem(
+                at: repositoryRoot
+                    .appendingPathComponent("packaging/release-variants/\(name)"),
+                to: variants.appendingPathComponent(name)
+            )
+        }
+        try Self.infoPlist(version: plistVersion).write(
+            to: resources.appendingPathComponent("Info.plist"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try Self.chineseHistory.write(
+            to: resources.appendingPathComponent("zh-Hans.lproj/ReleaseHistory.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try Self.englishHistory.write(
+            to: resources.appendingPathComponent("en.lproj/ReleaseHistory.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["CODE_SIGN_IDENTITY"] = "Developer ID Application: unit test"
+        environment["INSTALLER_SIGNING_IDENTITY"] = "Developer ID Installer: unit test"
+        environment.removeValue(forKey: "RELEASE_TAG")
+        environment.removeValue(forKey: "GENERATE_SPARKLE_UPDATE")
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = [scripts.appendingPathComponent("notarize-release.sh").path]
+        process.environment = environment
+        let output = Pipe()
+        let errors = Pipe()
+        process.standardOutput = output
+        process.standardError = errors
+        try process.run()
+        let outputData = output.fileHandleForReading.readDataToEndOfFile()
+        let errorData = errors.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return PublishRun(
+            status: process.terminationStatus,
+            output: String(decoding: outputData, as: UTF8.self),
+            errors: String(decoding: errorData, as: UTF8.self)
+        )
+    }
+
+    // MARK: - Negative control for the exact version match
+
+    /// Defect C's guard is the match rule itself, so the control replaces it with
+    /// the prefix rule it superseded, byte for byte, and shows the wrong entry
+    /// coming back with exit 0 and no diagnostic anywhere.
+    @Test func restoringThePrefixMatchBringsBackTheWrongEntry() throws {
+        let history = ReleasePublishIdentityTests.chineseHistory
+
+        let fixed = try runExtract(version: "1.8.25", history: history)
+        #expect(fixed.status == 0)
+        #expect(fixed.output.contains("Upstream entry bullet"))
+        #expect(!fixed.output.contains("Newest entry bullet"))
+
+        let mutated = try runExtract(
+            version: "1.8.25",
+            history: history,
+            patch: (
+                find: "!active && /^## / && same(heading_version($0), version) { active = 1; next }",
+                replace: "index($0, \"## \" version) == 1 { active = 1; next }"
+            )
+        )
+        #expect(mutated.status == 0)
+        #expect(mutated.output.contains("Newest entry bullet"))
+        #expect(!mutated.output.contains("Upstream entry bullet"))
+        #expect(mutated.errors.isEmpty)
+    }
+
+    private func runExtract(
+        version: String,
+        history: String,
+        patch: SourcePatch? = nil
+    ) throws -> PublishRun {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ReleaseExtractControl-\(UUID().uuidString)")
+        let scripts = root.appendingPathComponent("scripts")
+        try FileManager.default.createDirectory(
+            at: scripts,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try copyScript("extract-release-notes.sh", into: scripts, patch: patch)
+        let historyURL = root.appendingPathComponent("ReleaseHistory.md")
+        try history.write(to: historyURL, atomically: true, encoding: .utf8)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = [
+            scripts.appendingPathComponent("extract-release-notes.sh").path,
+            version,
+            historyURL.path,
+        ]
+        let output = Pipe()
+        let errors = Pipe()
+        process.standardOutput = output
+        process.standardError = errors
+        try process.run()
+        let outputData = output.fileHandleForReading.readDataToEndOfFile()
+        let errorData = errors.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return PublishRun(
+            status: process.terminationStatus,
+            output: String(decoding: outputData, as: UTF8.self),
+            errors: String(decoding: errorData, as: UTF8.self)
+        )
     }
 }

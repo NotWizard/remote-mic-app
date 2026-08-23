@@ -400,3 +400,154 @@ zsh scripts/compose-release-body.sh 1.8.25-fork.4 \
 - 纯构建期文本处理，不涉及硬件，也不改 App 运行时行为。
 - `notarize-release.sh` 的传播是用其函数原文的复刻脚本实测的，**真实签名、公证与 Sparkle appcast 生成没有在本次执行**。
 - 已发布的历史 Release 正文不会被本修复追溯改写。
+
+## 2026-08-23（第三轮复核）：Tag/版本/标题/前缀四处仍然错配
+
+前两轮只处理了「一个条目的边界在哪里」。这一轮发现「要发哪个版本」本身没人校验，
+以及标题从来不符合规范。三个缺陷都先复现再改。
+
+### 缺陷 A：Tag 与标题用的是上游版本号
+
+`Resources/Info.plist` 的 `CFBundleShortVersionString` 是 `1.8.25`（无 fork 后缀），
+`publish-release.sh` 由它得出 `VERSION`，再由 `RELEASE_TAG="${REQUESTED_RELEASE_TAG:-v$VERSION}"`
+得出 Tag。而两份 `ReleaseHistory.md` 的最新条目是 `1.8.25-fork.4`。
+
+**复现**：
+
+```
+$ /usr/bin/plutil -extract CFBundleShortVersionString raw -o - Resources/Info.plist
+1.8.25
+$ grep -m1 '^## [0-9]' Resources/zh-Hans.lproj/ReleaseHistory.md
+## 1.8.25-fork.4（本分支）
+$ DRY_RUN=1 zsh scripts/publish-release.sh prerelease     # 修复前
+EXIT=1        ← 无任何输出，死在 verify_local_artifacts 的 test -f 上
+```
+
+即：发布会打出 `v1.8.25`、标题写 `Remote Mic 1.8.25`，而版本历史说这次发的是
+`1.8.25-fork.4`；链路上没有一处比较过这两者。修复前的 DRY_RUN 甚至连一行诊断都没有，
+因为它先撞上缺失的制品并被 `set -e` 静默终止。
+
+**修复**：`publish-release.sh` 在工具链检查之后、任何制品校验和网络调用之前，
+要求被发布的版本必须是两份版本历史各自的**最新条目**，两种拒绝各自指出
+「找的版本 + 来源」「文件」「实际最新条目」：
+
+1. 没有任何条目叫这个版本 → `no release-history entry names <版本>`；
+2. 有这个条目但不是最新 → `<版本> is not the newest release-history entry`。
+
+`VERSION`（来自 Info.plist）和 `${RELEASE_TAG#v}`（可来自环境变量）都要过这道门，
+所以 `promote` 用环境变量指定 Tag 的路径同样拦得住。
+
+`notarize-release.sh` 也补了同一道门（仅在 `GENERATE_SPARKLE_UPDATE=1` 时）：
+它把 `$VERSION` 的列表项签进 Sparkle 说明和 appcast，原先唯一的校验是
+`rg -q '^- '`，任何非空条目都能满足，所以错配只会得到「另一个版本的说明」而不会报错。
+门放在构建之前，拒绝成本是秒级而不是一整轮签名。
+
+**不在本次范围**：fork 用什么版本号和什么 Tag 由用户决定，因此没有改 `Resources/Info.plist`。
+需要注意 `publish-release.sh` 还有一条**早于**本门的既有规则
+`RELEASE_TAG must be a stable semantic version tag`（`^v[0-9]+\.[0-9]+\.[0-9]+$`），
+`v1.8.25-fork.4` 过不了。也就是说把 Info.plist 改成 fork 版本号并不足以发布，
+Tag 格式必须一并决定。该阻塞已固化为测试 `aForkStyleVersionIsStoppedByTheExistingTagRule`。
+
+### 缺陷 B：Release 标题不符合规范
+
+`--title "Remote Mic $VERSION"` 既没有关键词，也正是
+[`Release_Notes_Guidelines.md`](../Release_Notes_Guidelines.md) 点名反对的「vX.Y.Z 发布了」式标题。
+
+**修复**：标题改为 `v$VERSION: $RELEASE_TITLE_KEYWORDS`，关键词由**环境变量**传入。
+
+选环境变量而不是位置参数的理由：本脚本其他每一个按次发布变化的输入（`RELEASE_TAG`、
+`DRY_RUN`）都走环境变量；`$# -ne 1` 的 `prerelease|promote` 调用约定不必改动；
+`promote` 根本不写标题（沿用预发布已有的标题），位置参数在那条路径上要么是死参数，
+要么只能做成可选参数——而「可选的关键词」正是静默发出通用标题的成因。
+
+关键词缺失、只有空白、跨多行，或已自带 `v<版本>:` / `#` 前缀，一律非 0 退出并说明原因，
+绝不退化成通用标题。解析出的标题在任何东西被创建之前就打印为 `RELEASE TITLE: …`，
+DRY_RUN 也因此能读到它。另外 `generate_release_notes` 增加了「正文不得含 H1」的门禁，
+因为标题本身就是 H1，正文再写一次页面会出现两次标题。
+
+**本版本的关键词建议**（仅建议，未写进脚本）：正文实际写了三件事——30 天信任到期、
+录音中途切换音频设备后语音键失灵、中文字号低于 12 号，因此建议
+`v1.8.25-fork.4: 信任 30 天到期、录音不再失灵、中文字号加大`。
+
+### 缺陷 C：版本查找是前缀匹配，今天的正确纯属巧合
+
+`extract-release-notes.sh` 用 `index($0, "## " version) == 1` 判定，
+所以查 `1.8.25` 会先命中位置更靠前的 `## 1.8.25-fork.4`。
+
+**复现**（修复前）：
+
+```
+$ zsh scripts/extract-release-notes.sh 1.8.25 Resources/zh-Hans.lproj/ReleaseHistory.md --bullets-only | head -1
+- **已信任的手机和手表现在会在 30 天后过期。**      ← fork.4 的内容
+$ sed -n '45p' Resources/zh-Hans.lproj/ReleaseHistory.md
+- 在打开错误架构的安装包时，会明确提示当前 Mac 所需的正确版本。   ← 真正的 1.8.25
+$ zsh scripts/extract-release-notes.sh 1.8.2 Resources/zh-Hans.lproj/ReleaseHistory.md --bullets-only | head -1
+- **已信任的手机和手表现在会在 30 天后过期。**      ← 1.8.2 也返回 fork.4
+```
+
+用独立解析器对两份文件全量比对，修复前**每份文件有 4 个真实历史版本**返回了别人的说明，
+且退出码全是 0：`1.8.25`（被 `1.8.25-fork.4` 抢走）、`1.8.2`、`1.8.1`（被 `1.8.19` 等抢走）、
+`1.6.1`（被 `1.6.11` 抢走）。上游真正的 `## 1.8.25（预发布）` 用自然键根本取不到。
+
+**修复**：匹配改为逐字节相等，只允许两份文件实际使用的一种装饰——版本号后一个括号标签：
+中文 `（本分支）`/`（预发布）`，英文 ` (this fork)`/` (Pre-release)`；两份文件各 52 个版本条目中
+有 17 个完全没有标签，所以标签是可选的。**没有对任何单个版本做特例。**
+
+装饰的定位用 `index()` / `substr()` 而不是字符组：在 `LC_ALL=C` 下 `[^（）]`
+只是「不属于这四个字节的字节」，而 `分`（E5 88 86）含其中的 `0x88`，
+用字符组会把 CJK 标签从字符中间切断。终止规则仍然排在匹配规则之前：
+逐字节相等已经能防住前缀重复命中，但**同名重复标题**仍会重新激活并用 `next` 跳过终止。
+
+同时新增 `--newest-version <文件>` 模式，输出该文件最新条目的裸版本号。
+两个发布脚本的门禁都用它，好处是「一个标题代表哪个版本」只有一份实现——
+上一轮的教训正是 `notarize-release.sh` 里那份复制品。
+
+### 调用方实测行为（改后）
+
+| 调用方 | 行为 |
+| --- | --- |
+| `compose-release-body.sh` | 命令替换取值，`set -euo pipefail` 下条目为空即 `no Chinese/English entry with bullets` 非 0 退出，正文 0 字节 |
+| `publish-release.sh` | 新门禁在制品校验和网络调用之前拒绝，退出 1，五行诊断 |
+| `notarize-release.sh` | 新门禁在 `build-app.sh` 之前拒绝，退出 1，四行诊断；`GENERATE_SPARKLE_UPDATE=0` 时不适用（该路径不产出说明） |
+| `package-macos-release-variants.sh` | 顺序模式 `set -e` 直接失败并透传子进程 stderr；并行模式取消另一个变体并 `exit 1`（`parallel signed release variant packaging failed: apple-silicon exit=1`）——用一个必败的 `RELEASE_VARIANT_RUNNER` 实测 |
+
+没有一个调用方会输出空的或只有一半的说明。
+
+### 历史一致性（本轮自测数字）
+
+用独立 Python 解析器重建两份文件的 版本 → 条目 映射，再逐条与脚本输出逐字节比较：
+
+- 每份文件 **52 个版本条目**（`## ` 标题共 55 个，其中 3 个是 fork.4 条目内部的分节标题）；
+- 3 种 locale（`en_US.UTF-8`、`zh_CN.UTF-8`、`C`）× 2 份文件 ×（52 版本 × 2 种模式 + 1 次 `--newest-version`）
+  = **630 次查找，全部通过**，且每个条目都至少有一条列表项；
+- 同一套 630 次查找跑在修复前的脚本（`git show HEAD:`）上：**54 处失败**，
+  即上文那 4 个版本 × 2 种模式 × 2 份文件 × 3 种 locale，外加 `--newest-version`（修复前它退出 0 但输出为空，不是非零失败）。
+
+### 新增回归项
+
+`Tests/RemoteMicTests/ReleaseNotesExtractionTests.swift` 从 22 项 / 2 套增加到 44 项 / 3 套，
+新套件 `Release publish identity gates` 会把 `scripts/` 与 `Resources/` 复制到一次性 ROOT，
+在其中运行真实的 `publish-release.sh` 和 `notarize-release.sh`。
+既有断言只在语义随精确匹配改变时同步更新（例如 `1.8.25` 现在应当解析到上游条目），
+没有删除测试，也没有放宽任何断言。
+
+### 负向对照（改脚本 → 跑测试 → 从备份恢复）
+
+| 拆掉的守卫 | 退出码 | 失败项 |
+| --- | --- | --- |
+| 删掉 `require_release_history_entry "$VERSION" …` 调用 | 1 | 4 项：`aVersionThatIsNotTheNewestReleaseHistoryEntryIsRefused` 起，且 `RELEASE TITLE: v1.8.25: a、b、c` 真的被解析出来 |
+| 把关键词必填条件换成 `if false; then` | 1 | 3 项，`RELEASE TITLE: v1.9.0: ` —— 正是要防的通用标题 |
+| 精确匹配换回 `index($0, "## " version) == 1` | 1 | 6 项，跨两套；`1.8.25` 重新返回 fork.4 的内容且 stderr 为空 |
+| 把 `notarize-release.sh` 的门禁条件换成 `if false; then` | 1 | 1 项（`notarizingRefusesAVersionThatIsNotTheNewestEntry`） |
+
+三个「负向对照测试」本身也在守卫存在时反向验证过：它们从脚本副本里删守卫，
+若守卫文本已不在脚本中会抛 `GuardTextMissing` 而不是假装通过。
+
+### 自动化与真机边界
+
+- 仍是纯构建期文本处理，不涉及硬件，也不改 App 运行时行为。
+- **DRY_RUN 只走到了拒绝**：本仓库当前 `dist/` 没有已签名公证的 Sparkle zip、appcast 和
+  Intel 变体，所以 `verify_local_artifacts` 之后的路径本轮没有执行。标题解析用一次性副本
+  （改副本的 Info.plist 和版本历史，不动仓库文件）验证到 `RELEASE TITLE:` 行为止。
+- **真实签名、公证、appcast 生成、Sparkle 安装更新和任何真机验收本轮都没有执行。**
+- 未创建 Tag、未创建 Release、未 push；改动全部留在工作区。

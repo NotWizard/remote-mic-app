@@ -72,6 +72,27 @@ if ! print -r -- "$RELEASE_TAG" | rg -q '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z
   print -u2 "RELEASE_TAG must be a version tag such as v1.5.0 or v1.5.0-rc.1"
   exit 1
 fi
+# The Sparkle notes and the appcast below are `$VERSION`'s bullets, signed into
+# artifacts an updater will show. Version numbers here are prefixes of one
+# another, so a `$VERSION` that is not the release the history file describes
+# hands the updater a different release's notes — and the only downstream gate is
+# `rg -q '^- '`, which any non-empty entry satisfies. Checked before the build so
+# the refusal costs seconds instead of a full signed run.
+if [[ "$GENERATE_SPARKLE_UPDATE" == "1" ]]; then
+  for release_history in \
+    "$ROOT/Resources/zh-Hans.lproj/ReleaseHistory.md" \
+    "$ROOT/Resources/en.lproj/ReleaseHistory.md"; do
+    newest_release_version="$("$ROOT/scripts/extract-release-notes.sh" \
+      --newest-version "$release_history")"
+    if [[ "$newest_release_version" != "$VERSION" ]]; then
+      print -u2 "refusing to release: $VERSION is not the newest release-history entry"
+      print -u2 "  version looked for: $VERSION (from Resources/Info.plist CFBundleShortVersionString)"
+      print -u2 "  release history file: ${release_history#$ROOT/}"
+      print -u2 "  newest entry present: ${newest_release_version:-<none>}"
+      exit 1
+    fi
+  done
+fi
 if [[ "$CODE_SIGN_IDENTITY" != "Developer ID Application: "* ]]; then
   print -u2 "CODE_SIGN_IDENTITY must name a Developer ID Application identity"
   exit 1

@@ -102,6 +102,43 @@
 `compose-release-body.sh` 必须一起失败且不输出任何正文；随后恢复该标题。
 如果这一步退出 0 并给出一份「看起来正常」的正文，判定失败。
 
+## 用例 8：Tag、版本、标题与版本历史必须指同一个发布
+
+适用版本或分支：`1.8.25-fork.4` 之后的任何候选分支。
+
+测试前准备：确认工作区干净，记录 `Resources/Info.plist` 的
+`CFBundleShortVersionString` 与两份 `ReleaseHistory.md` 的最新条目。
+
+1. 记录三个值：
+   `/usr/bin/plutil -extract CFBundleShortVersionString raw -o - Resources/Info.plist`、
+   `zsh scripts/extract-release-notes.sh --newest-version Resources/zh-Hans.lproj/ReleaseHistory.md`、
+   `zsh scripts/extract-release-notes.sh --newest-version Resources/en.lproj/ReleaseHistory.md`。
+   预期：三者完全相同。不同就直接进入第 2 步确认发布会被拒绝。
+2. 跑 `DRY_RUN=1 zsh scripts/publish-release.sh prerelease`。
+   预期（三者一致时）：走到制品校验；不一致时**退出 1**，stderr 必须同时给出「找的版本 + 来源」
+   「版本历史文件路径」「实际最新条目」三项。
+3. 用环境变量试一次绕过：`DRY_RUN=1 RELEASE_TAG=v<某个更旧的版本> zsh scripts/publish-release.sh promote`。
+   预期：同样退出 1，并指出该版本不是最新条目。
+4. 不设关键词跑 `DRY_RUN=1 zsh scripts/publish-release.sh prerelease`（在版本一致的候选分支上）。
+   预期：退出 1，stderr 含 `RELEASE_TITLE_KEYWORDS is required` 并引用
+   `Release_Notes_Guidelines.md`；标准输出**没有** `RELEASE TITLE:` 行。
+5. 读一遍用例 7 生成的正文，据其内容拟三个关键词，再跑
+   `DRY_RUN=1 RELEASE_TITLE_KEYWORDS='<关键词一、关键词二、关键词三>' zsh scripts/publish-release.sh prerelease`。
+   预期：标准输出出现且仅出现一次 `RELEASE TITLE: v<版本>: <三个关键词>`。
+6. 发布后在候选 Release 页面确认：标题就是第 5 步那一行，页面正文没有第二个同样的标题。
+
+预期结果：Tag、`Resources/Info.plist` 的版本、两份版本历史的最新条目和 Release 标题里的版本号
+全部相同；标题形如 `v<版本>: 三个关键词`，关键词能对应正文实际写了什么。
+
+失败判定：版本与最新条目不同却仍能继续发布；拒绝信息缺少版本、文件或实际最新条目任一项；
+`RELEASE_TAG` 从环境变量传入时绕过检查；未设 `RELEASE_TITLE_KEYWORDS` 却发出了标题；
+标题里没有关键词或写成 `Remote Mic <版本>`；标题的版本号与 Tag 不一致；页面出现两次标题。
+
+尚未完成（需要用户决定）：本 fork 的版本号与 Tag 格式仍未确定。`Resources/Info.plist` 现在是上游
+`1.8.25`，而最新条目是 `1.8.25-fork.4`，所以第 2 步当前**必然拒绝**；同时
+`publish-release.sh` 既有规则只接受 `^v[0-9]+\.[0-9]+\.[0-9]+$`，`v1.8.25-fork.4` 也过不了。
+第 4–6 步在版本号与 Tag 格式确定之前只能用一次性副本演练，不能当作真实候选验收。
+
 ## 稳定功能回归
 
 - `mac-preview-candidate.yml` 的普通候选 Push 仍不读取 Apple 发布证书。
@@ -111,6 +148,14 @@
 - 历史 schema 1 候选仍可按既有正式晋升流程验证，但不会因普通 Pre-release 事件自动回流 main。
 - 历史版本说明仍只抽出自己那一段：本仓版本号互为前缀（`1.8.25` 与 `1.8.25-fork.*`），抽取不得把
   相邻条目并进来，也不得在条目内部的四个规范分节标题处提前截断。
+- 版本匹配必须是**精确**的，不是前缀：查 `1.8.25` 只能得到 `## 1.8.25（预发布）`，不能得到
+  `## 1.8.25-fork.4`；查 `1.8.2`、`1.8.1`、`1.6.1` 同理只能得到各自那一条。版本号后只允许一个
+  括号标签（中文 `（本分支）`/`（预发布）`，英文 ` (this fork)`/` (Pre-release)`），
+  没有标签也必须能查到。回归时中英两份文件的全部 52 个版本都要在默认和 `--bullets-only`
+  两种模式下按各自名字抽对。
+- `publish-release.sh` 与 `notarize-release.sh` 都必须拒绝「被发布的版本不是版本历史最新条目」，
+  且 `notarize-release.sh` 的拒绝要发生在 `build-app.sh` 之前；`package-macos-release-variants.sh`
+  在顺序与并行两种模式下都必须把这个失败透传出来，而不是继续生成 appcast。
 - 两个方向的丢内容都要回归，不能只看合并：相邻版本的条目不得并进来；这一版自己写下的分节和列表项
   也不得从条目中途消失（`## 🐛 问题修复（第 2 批）` 这类标题就曾让后半段整节静默丢掉，退出码仍是 0）。
 - 以规范分节表情开头但不等于八个规范分节标题的标题（`## 🎉 9.9.8 …`、`## 🎉 版本九点九点八`、
@@ -130,6 +175,12 @@
 - 用例 7 的正文结构由 `Tests/RemoteMicTests/ReleaseNotesExtractionTests.swift` 覆盖，直接驱动真实
   `compose-release-body.sh`、`extract-release-notes.sh` 和两份真实 `ReleaseHistory.md`；这只证明
   Markdown 文本结构正确，**没有验证 GitHub 页面实际渲染出来的样子**，需要在候选 Release 页面上肉眼确认一次。
+- 用例 8 的门禁由同一文件里的 `Release publish identity gates` 套件覆盖：它把 `scripts/` 与
+  `Resources/` 复制到一次性 ROOT，在其中运行真实的 `publish-release.sh` 和 `notarize-release.sh`，
+  每个守卫都配一条「把守卫从副本里删掉后必须失败」的负向对照。
+- **DRY_RUN 目前只能走到拒绝**：仓库 `dist/` 没有已签名公证的 Sparkle zip、appcast 和 Intel 变体，
+  `verify_local_artifacts` 之后的路径无法在本地执行。用例 8 第 5 步的 `RELEASE TITLE:` 行只在
+  一次性副本里演练过，**真实签名、公证、appcast 生成和 Sparkle 安装更新都未执行**。
 - 残余风险：完全不带规范分节表情的标题（例如 `## 版本说明`）仍会被当成下一个版本、直接终止条目，
   没有任何提示。以分节表情开头的近似标题（含 `## 🎉 版本九点九点八`、全角数字写法）现在会非 0 退出，
   不再静默合并；但表情之外的写法只能靠用例 7 第 4 步的分节/列表项计数发现。

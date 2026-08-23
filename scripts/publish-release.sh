@@ -72,6 +72,7 @@ if [[ ! "$RELEASE_TAG" =~ '^v[0-9]+\.[0-9]+\.[0-9]+$' ]]; then
   print -u2 "RELEASE_TAG must be a stable semantic version tag such as v1.8.8"
   exit 1
 fi
+
 GITHUB_DOWNLOAD_PREFIX="https://github.com/$REPOSITORY/releases/download/$RELEASE_TAG/"
 CDN_DOWNLOAD_PREFIX="https://download.sayall.app/mac/releases/$RELEASE_TAG/"
 for command_name in cmp curl gh git jq plutil rg shasum stat; do
@@ -80,6 +81,108 @@ for command_name in cmp curl gh git jq plutil rg shasum stat; do
     exit 1
   }
 done
+
+ZH_HISTORY="$ROOT/Resources/zh-Hans.lproj/ReleaseHistory.md"
+EN_HISTORY="$ROOT/Resources/en.lproj/ReleaseHistory.md"
+
+# The tag, the version and the release notes must all name ONE release.
+#
+# `VERSION` is read from Resources/Info.plist and `RELEASE_TAG` defaults to
+# `v$VERSION`, but it can also be handed in through the environment, so both are
+# checked. Nothing else here compares them against the release history, and the
+# body is composed from `$VERSION` further down, so a fork whose Info.plist still
+# carries the upstream version number publishes an upstream tag, an upstream
+# title and — once the version numbers are prefixes of each other — somebody
+# else's notes, with every downstream gate green: the `^- ` checks only fire when
+# an entry has no bullet at all, and a wrong entry has plenty.
+#
+# Two verdicts, both refusals, because the two are different mistakes to fix:
+#
+#   1. no entry names the version at all — the entry was never written;
+#   2. an entry exists but is not the newest one — the version was never bumped,
+#      so the release would ship an older release's notes under a new tag.
+#
+# The newest entry is what the history file says is being released, which is why
+# it is named in both messages even when the version is simply absent.
+refuse_release_history_mismatch() {
+  local version="$1" origin="$2" history="$3" reason="$4" newest="$5"
+  print -u2 "refusing to publish: $reason"
+  print -u2 "  version looked for: $version (from $origin)"
+  print -u2 "  release history file: ${history#$ROOT/}"
+  print -u2 "  newest entry present: ${newest:-<none>}"
+  print -u2 "  the tag, Resources/Info.plist and both ReleaseHistory.md files must name the same release"
+  exit 1
+}
+
+require_release_history_entry() {
+  local version="$1" origin="$2" history entry newest extract_status
+  for history in "$ZH_HISTORY" "$EN_HISTORY"; do
+    extract_status=0
+    entry="$("$ROOT/scripts/extract-release-notes.sh" "$version" "$history")" || extract_status=$?
+    if (( extract_status != 0 )); then
+      print -u2 "refusing to publish: the release history entry for $version could not be read"
+      print -u2 "  release history file: ${history#$ROOT/}"
+      print -u2 "  extract-release-notes.sh exit: $extract_status"
+      exit 1
+    fi
+    newest="$("$ROOT/scripts/extract-release-notes.sh" --newest-version "$history")"
+    if [[ -z "$entry" ]]; then
+      refuse_release_history_mismatch "$version" "$origin" "$history" \
+        "no release-history entry names $version" "$newest"
+    fi
+    if [[ "$newest" != "$version" ]]; then
+      refuse_release_history_mismatch "$version" "$origin" "$history" \
+        "$version is not the newest release-history entry" "$newest"
+    fi
+  done
+}
+
+require_release_history_entry "$VERSION" "Resources/Info.plist CFBundleShortVersionString"
+if [[ "${RELEASE_TAG#v}" != "$VERSION" ]]; then
+  require_release_history_entry "${RELEASE_TAG#v}" "RELEASE_TAG"
+fi
+
+# Release_Notes_Guidelines.md fixes the release title as
+# `# vX.Y.Z: three keywords that point at this release's focus`, and forbids the
+# body from repeating it as an H1. `--title "Remote Mic $VERSION"` satisfied
+# neither half: it carries no keywords, so the title said nothing about the
+# release, and "vX.Y.Z released" is exactly what the guidelines call out.
+#
+# The keywords are editorial: they have to be read off the body a human wrote,
+# and no script can derive them. They arrive in the environment rather than as a
+# positional argument because every other per-release input here already does
+# (`RELEASE_TAG`, `DRY_RUN`), because the `$# -ne 1` contract of
+# `publish-release.sh prerelease|promote` stays intact, and because `promote`
+# never writes a title — editing the existing release keeps the title the
+# pre-release already has — so a positional argument would be dead weight or
+# and an optional keyword list is how a generic title gets published in silence.
+# Missing means refusal, never a default.
+RELEASE_TITLE=""
+if [[ "$MODE" == "prerelease" ]]; then
+  RELEASE_TITLE_KEYWORDS="${RELEASE_TITLE_KEYWORDS:-}"
+  if [[ -z "${RELEASE_TITLE_KEYWORDS//[[:space:]]/}" ]]; then
+    print -u2 "refusing to publish: RELEASE_TITLE_KEYWORDS is required"
+    print -u2 "  Release_Notes_Guidelines.md fixes the release title as 'vX.Y.Z: three keywords'"
+    print -u2 "  the keywords name this release's focus and have to be read off the notes, so they cannot be generated"
+    print -u2 "  example: RELEASE_TITLE_KEYWORDS='设备信任期限、录音恢复、界面字号' DRY_RUN=1 $0 prerelease"
+    exit 1
+  fi
+  if [[ "$RELEASE_TITLE_KEYWORDS" == *$'\n'* ]]; then
+    print -u2 "refusing to publish: RELEASE_TITLE_KEYWORDS must be a single line"
+    exit 1
+  fi
+  case "$RELEASE_TITLE_KEYWORDS" in
+    "#"*|"v$VERSION"*)
+      print -u2 "refusing to publish: RELEASE_TITLE_KEYWORDS must be the keywords only"
+      print -u2 "  the 'v$VERSION: ' prefix is added here; a second one renders the version twice"
+      exit 1
+      ;;
+  esac
+  RELEASE_TITLE="v$VERSION: $RELEASE_TITLE_KEYWORDS"
+  # Printed before anything is created, so the title can be read and rejected
+  # while a dry run is still the only thing that has happened.
+  print "RELEASE TITLE: $RELEASE_TITLE"
+fi
 
 WORK_DIR="$(/usr/bin/mktemp -d /private/tmp/remotemic-publish-release.XXXXXX)"
 STAGING_DIR="$WORK_DIR/upload"
@@ -192,6 +295,13 @@ generate_release_notes() {
     > "$RELEASE_NOTES"
 
   rg -q '^- ' "$RELEASE_NOTES"
+
+  # The title is the H1. Release_Notes_Guidelines.md requires the body not to
+  # repeat it, because the page renders the release header and then the body.
+  if rg -q '^# ' "$RELEASE_NOTES"; then
+    print -u2 "release notes body must not repeat the release title as an H1"
+    exit 1
+  fi
 
   if rg -i -q \
     '((连续|连点|点击|轻点).{0,24}(版本号|当前版本).{0,24}(次|隐藏|入口))|((tap|click).{0,24}(version|build).{0,24}(times|hidden|secret|invite|enrollment))|(隐藏入口|秘密手势|secret gesture|hidden entry|invitation-code entry)' \
@@ -586,6 +696,7 @@ if [[ "$MODE" == "prerelease" ]]; then
     print "MODE: prerelease"
     print "TAG: $RELEASE_TAG"
     print "VERSION: $VERSION ($BUILD)"
+    print "TITLE: $RELEASE_TITLE"
     exit 0
   fi
 
@@ -616,7 +727,7 @@ if [[ "$MODE" == "prerelease" ]]; then
     --verify-tag \
     --prerelease \
     --latest=false \
-    --title "Remote Mic $VERSION" \
+    --title "$RELEASE_TITLE" \
     --notes-file "$RELEASE_NOTES"
 
   RELEASE_STATE="$(gh api "repos/$REPOSITORY/releases/tags/$RELEASE_TAG" --jq '[.draft, .prerelease] | @tsv')"
