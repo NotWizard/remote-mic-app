@@ -188,11 +188,9 @@ generate_release_notes() {
   {
     print "## 更新内容"
     print
-    /usr/bin/awk -v version="$VERSION" '
-      index($0, "## " version) == 1 { active = 1; next }
-      active && /^## / { exit }
-      active { print }
-    ' "$ROOT/Resources/zh-Hans.lproj/ReleaseHistory.md"
+    "$ROOT/scripts/extract-release-notes.sh" \
+      "$VERSION" \
+      "$ROOT/Resources/zh-Hans.lproj/ReleaseHistory.md"
   } > "$RELEASE_NOTES"
 
   rg -q '^- ' "$RELEASE_NOTES"
