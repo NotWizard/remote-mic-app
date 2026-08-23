@@ -200,6 +200,8 @@ The **Statistics** page shows remote button presses, voice duration, and the lon
 
 Remote Mic does not upload or store voice, does not change the system default input or output device, and does not log voice content, Bluetooth addresses, or peripheral identifiers.
 
+The local diagnostic log **does** record the bundle identifier of any application a button opened or focused (for example `com.apple.Safari`), which is what makes "I pressed the button and the app did not come up" diagnosable. That log is written only on this Mac, is readable only by your own account, and is never uploaded; if you would rather not keep those records, delete the log folder at any time from the File menu.
+
 ## Uninstall
 
 1. Quit Remote Mic.
