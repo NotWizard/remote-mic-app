@@ -735,6 +735,64 @@ struct SettingsPageRegressionTests {
         )
     }
 
+    /// Every boundary in the connection page's battery glyph: which icon bucket a level falls
+    /// into, which tint it gets, and that the two change bucket at the same level.
+    ///
+    /// This replaces two assertions that `SettingsView.swift` still contained the source text
+    /// of the `10` and `25` comparisons. Those passed with a comparison pointing either way and
+    /// failed on a reformat, so an off-by-one at 10/11 or 25/26 — the only defect that can
+    /// realistically appear in a threshold table — was invisible to them.
+    @Test func remoteBatteryGlyphBucketsAndTintsAgreeAtEveryBoundary() {
+        // Colour comparison has to be able to fail, or the tint half of this test is vacuous.
+        #expect(Color.red != Color.orange)
+        #expect(Color.red != Color.secondary)
+        #expect(Color.orange != Color.secondary)
+
+        let expected: [(level: Int?, symbol: String, tint: Color)] = [
+            (nil, "battery.0percent", .secondary),
+            (0, "battery.0percent", .red),
+            (10, "battery.0percent", .red),
+            (11, "battery.25percent", .orange),
+            (25, "battery.25percent", .orange),
+            (26, "battery.50percent", .secondary),
+            (50, "battery.50percent", .secondary),
+            (51, "battery.75percent", .secondary),
+            (75, "battery.75percent", .secondary),
+            (76, "battery.100percent", .secondary),
+            (100, "battery.100percent", .secondary),
+        ]
+
+        for row in expected {
+            let level = row.level.map { "\($0)" } ?? "nil"
+            let symbol = RemoteBatteryPresentation.symbol(for: row.level)
+            #expect(symbol == row.symbol, "level \(level) drew \(symbol)")
+            #expect(
+                RemoteBatteryPresentation.color(for: row.level) == row.tint,
+                "level \(level) was tinted with the wrong colour"
+            )
+        }
+
+        // Red and orange are warnings, so neither may leak past 25: 26 is an ordinary level.
+        let tintAt26 = RemoteBatteryPresentation.color(for: 26)
+        #expect(tintAt26 != .red)
+        #expect(tintAt26 != .orange)
+
+        // Stated as a property as well as a table, so no future edit can move one threshold
+        // without the other: every level where the tint changes is also a level where the icon
+        // bucket changes.
+        let iconSteps = (1...100).filter {
+            RemoteBatteryPresentation.symbol(for: $0)
+                != RemoteBatteryPresentation.symbol(for: $0 - 1)
+        }
+        let tintSteps = (1...100).filter {
+            RemoteBatteryPresentation.color(for: $0)
+                != RemoteBatteryPresentation.color(for: $0 - 1)
+        }
+        #expect(iconSteps == [11, 26, 51, 76])
+        #expect(tintSteps == [11, 26])
+        #expect(Set(tintSteps).isSubset(of: Set(iconSteps)))
+    }
+
     @Test func remoteCardsShowCompleteNamesWithoutDuplicateConnectionSummary() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -764,7 +822,7 @@ struct SettingsPageRegressionTests {
 
         let cardStart = try #require(settingsSource.range(of: "private func remoteDeviceCard"))
         let cardEnd = try #require(settingsSource.range(
-            of: "private func batterySymbol",
+            of: "private func remoteBatteryHelp",
             range: cardStart.upperBound..<settingsSource.endIndex
         ))
         let cardSource = settingsSource[cardStart.lowerBound..<cardEnd.lowerBound]
@@ -784,8 +842,6 @@ struct SettingsPageRegressionTests {
         ] {
             #expect(settingsSource.contains(symbol))
         }
-        #expect(settingsSource.contains("if level <= 10 { return .red }"))
-        #expect(settingsSource.contains("if level <= 25 { return .orange }"))
 
         let panelStart = try #require(settingsSource.range(of: "private var connectionDevicePanel"))
         let panelEnd = try #require(settingsSource.range(

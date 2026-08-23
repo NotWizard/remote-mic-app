@@ -244,6 +244,39 @@ struct VersionTapRevealCounter {
     }
 }
 
+/// The battery glyph and tint the connection page shows for a reported remote level.
+///
+/// Both halves used to be `private func`s on `SettingsView`, which put them out of reach of
+/// every test, so the only coverage they had was `SettingsPageRegressionTests` checking that
+/// `SettingsView.swift` still contained the source text of the two comparisons. That kind of
+/// assertion passes whichever way a comparison points and fails on a reformat, which left the
+/// thresholds — the one place an off-by-one would actually live — unchecked. Both are pure
+/// functions of the level, so they moved here and the boundaries are asserted directly.
+///
+/// The two halves are read together as one glyph, so they must change bucket at the same
+/// levels: 10 → 11 and 25 → 26. `nil` is the deliberate exception. An unknown level draws the
+/// empty glyph but stays muted instead of red, because nothing is known to be wrong yet.
+enum RemoteBatteryPresentation {
+    /// SF Symbol names for `Image(systemName:)`, not localization keys.
+    static func symbol(for level: Int?) -> String {
+        guard let level else { return "battery.0percent" }
+        switch level {
+        case 76...: return "battery.100percent"
+        case 51...: return "battery.75percent"
+        case 26...: return "battery.50percent"
+        case 11...: return "battery.25percent"
+        default: return "battery.0percent"
+        }
+    }
+
+    static func color(for level: Int?) -> Color {
+        guard let level else { return .secondary }
+        if level <= 10 { return .red }
+        if level <= 25 { return .orange }
+        return .secondary
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var model: BridgeAppModel
     @ObservedObject var settings: AppSettings
@@ -1374,7 +1407,7 @@ struct SettingsView: View {
     ) -> some View {
         HStack(spacing: 4) {
             ZStack(alignment: .bottomTrailing) {
-                Image(systemName: batterySymbol(for: level))
+                Image(systemName: RemoteBatteryPresentation.symbol(for: level))
                     .font(.system(size: 13, weight: .medium))
                 if powerState == .charging || powerState == .externalPower {
                     Image(systemName: "bolt.fill")
@@ -1389,26 +1422,8 @@ struct SettingsView: View {
 
             Text(level.map { "\($0)%" } ?? "—")
         }
-        .foregroundStyle(batteryColor(for: level))
+        .foregroundStyle(RemoteBatteryPresentation.color(for: level))
         .help(remoteBatteryHelp(level: level, powerState: powerState))
-    }
-
-    private func batterySymbol(for level: Int?) -> String {
-        guard let level else { return "battery.0percent" }
-        switch level {
-        case 76...: return "battery.100percent"
-        case 51...: return "battery.75percent"
-        case 26...: return "battery.50percent"
-        case 11...: return "battery.25percent"
-        default: return "battery.0percent"
-        }
-    }
-
-    private func batteryColor(for level: Int?) -> Color {
-        guard let level else { return .secondary }
-        if level <= 10 { return .red }
-        if level <= 25 { return .orange }
-        return .secondary
     }
 
     private func remoteBatteryHelp(
