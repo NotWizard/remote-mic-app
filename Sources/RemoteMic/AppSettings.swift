@@ -416,9 +416,31 @@ final class AppSettings: ObservableObject {
 
     /// When each phone or watch identity was approved. The plain string set this replaced had no
     /// notion of time, so one approval trusted a device for the life of the installation.
+    ///
+    /// Main-actor facing: this is what SwiftUI observes. The transports do not read it — see
+    /// `lockedTrustedPhoneIdentityTrustDates`.
     @Published private(set) var trustedPhoneIdentityTrustDates: [String: Date] {
-        didSet { persistTrustedPhoneIdentities() }
+        didSet {
+            // Snapshot before persisting, so a revocation is already refused on the transport
+            // path by the time `clearTrustedPhoneIdentities()` returns to its caller.
+            storeTrustedPhoneIdentitySnapshot(trustedPhoneIdentityTrustDates)
+            persistTrustedPhoneIdentities()
+        }
     }
+
+    /// What `isPhoneIdentityTrusted` actually reads.
+    ///
+    /// `phoneRemoteServer.isIdentityTrusted` and `watchBluetoothServer.isIdentityTrusted` must
+    /// answer `Bool` in the transport's own stack frame, so that one query can neither `await` nor
+    /// dispatch to the main actor. Pointing it at a copy kept under this lock means the
+    /// transport thread never touches the `@Published` dictionary the main actor replaces.
+    ///
+    /// The lock is held for exactly one dictionary lookup or one whole-dictionary assignment.
+    /// Nothing inside the critical section takes another lock, dispatches, awaits or calls back
+    /// out, so this is a single leaf lock: a transport thread can never end up waiting on the
+    /// main actor, and the main actor can never end up waiting on a transport thread.
+    private let trustedPhoneIdentityLock = NSLock()
+    private var lockedTrustedPhoneIdentityTrustDates: [String: Date] = [:]
 
     /// Kept as the identity set the connection page and callers already read.
     var trustedPhoneIdentityFingerprints: Set<String> {
@@ -628,6 +650,12 @@ final class AppSettings: ObservableObject {
             currentAt: loadedAt
         )
         trustedPhoneIdentityTrustDates = currentTrustDates
+        // `didSet` never fires for the initial assignment inside `init`, so the snapshot the
+        // transports read has to be seeded here as well, under the same lock as every later
+        // update. Nothing else holds a reference to `self` yet, so this cannot contend.
+        trustedPhoneIdentityLock.lock()
+        lockedTrustedPhoneIdentityTrustDates = currentTrustDates
+        trustedPhoneIdentityLock.unlock()
         if currentTrustDates != storedTrustDates {
             // `didSet` never fires for the initial assignment inside `init`, so expired and
             // migrated entries have to be written back here or they would linger forever.
@@ -1266,8 +1294,14 @@ final class AppSettings: ObservableObject {
     /// within a month. Re-approval costs one two-digit code confirmation.
     static let trustedPhoneIdentityLifetime: TimeInterval = 30 * 24 * 60 * 60
 
+    /// Called by the phone and watch transports on their own thread, so it reads the
+    /// lock-protected copy rather than the `@Published` dictionary. The verdict itself is
+    /// unchanged: same lifetime, same rejection of a future-dated stamp.
     func isPhoneIdentityTrusted(_ fingerprint: String, at date: Date = Date()) -> Bool {
-        guard let trustedAt = trustedPhoneIdentityTrustDates[fingerprint] else { return false }
+        trustedPhoneIdentityLock.lock()
+        let trustedAt = lockedTrustedPhoneIdentityTrustDates[fingerprint]
+        trustedPhoneIdentityLock.unlock()
+        guard let trustedAt else { return false }
         return Self.isTrustCurrent(trustedAt, at: date)
     }
 
@@ -1301,6 +1335,12 @@ final class AppSettings: ObservableObject {
 
     private static func storedTrustedPhoneIdentities(in defaults: UserDefaults) -> [String: Date] {
         (defaults.dictionary(forKey: Keys.trustedPhoneIdentityTrustDates) as? [String: Date]) ?? [:]
+    }
+
+    private func storeTrustedPhoneIdentitySnapshot(_ identities: [String: Date]) {
+        trustedPhoneIdentityLock.lock()
+        lockedTrustedPhoneIdentityTrustDates = identities
+        trustedPhoneIdentityLock.unlock()
     }
 
     private func persistTrustedPhoneIdentities() {

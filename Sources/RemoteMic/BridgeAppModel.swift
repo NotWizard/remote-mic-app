@@ -261,8 +261,11 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
             self?.scheduleAudioRecovery(reason: "engine_configuration_change")
         }
         // The one callback that cannot hop: it has to return the answer in the caller's
-        // frame. It reads `AppSettings` from the transport's thread, which the isolation
-        // cannot express — see the automation boundary in
+        // frame, so it can neither `await` nor dispatch. It is therefore the one place that
+        // reads `AppSettings` from the transport's thread — safe because
+        // `isPhoneIdentityTrusted` answers from a lock-protected snapshot rather than the
+        // `@Published` dictionary the main actor replaces. Keep that guarantee in
+        // `AppSettings` if this callback is ever rewritten; see
         // Bugs/2026-08-21-published-state-updated-off-the-main-thread.md.
         phoneRemoteServer.isIdentityTrusted = { [weak self] fingerprint in
             self?.settings.isPhoneIdentityTrusted(fingerprint) ?? false
@@ -338,6 +341,8 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
                 self?.receivePhoneAudio(samples, source: .nearbyPhone)
             }
         }
+        // Same non-hopping synchronous query as the phone server above: answered in the
+        // transport's own frame from the lock-protected snapshot in `AppSettings`.
         watchBluetoothServer.isIdentityTrusted = { [weak self] fingerprint in
             self?.settings.isPhoneIdentityTrusted(fingerprint) ?? false
         }

@@ -65,7 +65,7 @@ WEB REMOTE disabled_by_user
 
 手机 / Watch / 网页共 29 处回调赋值中的 27 处，加上 `audioOutput.onConfigurationChange`，共 28 个闭包字面量前加 `@Sendable`。这一步关闭了上面说的隔离继承：闭包不再是主线程隔离的，于是**跳转成为编译器要求**。删掉任意一处跳转都是编译错误，而不是像修复前那样静默通过。
 
-余下 2 处例外：`phoneRemoteServer.isIdentityTrusted` 与 `watchBluetoothServer.isIdentityTrusted` 必须在调用方栈帧里同步返回 `Bool`，无法跳转。它们在传输线程上读 `settings.trustedPhoneIdentityTrustDates`——一个 `@Published private(set) var [String: Date]`，而主线程会在 `requestPhoneApproval` 里通过 `trustPhoneIdentity` 写同一个字典，构成未同步的 Dictionary 读写竞态。本次刻意未改（见「附带发现」），并在代码里注明原因，避免后来者误以为漏标。
+余下 2 处例外：`phoneRemoteServer.isIdentityTrusted` 与 `watchBluetoothServer.isIdentityTrusted` 必须在调用方栈帧里同步返回 `Bool`，无法跳转。它们在传输线程上读 `settings.trustedPhoneIdentityTrustDates`——一个 `@Published private(set) var [String: Date]`，而主线程会在 `requestPhoneApproval` 里通过 `trustPhoneIdentity` 写同一个字典。本次刻意未改，并在代码里注明原因，避免后来者误以为漏标。**当时把这一点写成「已确认的未同步 Dictionary 读写竞态」并不准确，且当时判断需要跨仓库协议改动也是错的**，两处均已在文末「后续修复：`isIdentityTrusted` 的同步信任查询」中更正，该修复已在本仓库完成。
 
 **四、`webRemoteState` 补上缺失的跳转，并把授权路径的跳转移到边界**
 
@@ -206,5 +206,67 @@ EXIT_CODE=0
 
 ## 附带发现（本次未修复）
 
-1. **`isIdentityTrusted` 在传输线程上与主线程竞争同一个 `@Published` 字典。** `phoneRemoteServer.isIdentityTrusted` 与 `watchBluetoothServer.isIdentityTrusted` 必须在调用方栈帧里同步返回 `Bool`，因此无法用跳转修复；把它改对需要让 `AppSettings` 的信任查询本身可跨线程安全读取，或者让供应商协议改成异步回答。属于独立改动，本次刻意保持原样并在代码注释里标明。
-2. **`endSessionAfterDraining` 的完成回调线程未受隔离约束。** `stopPhoneVoice` 与 `releaseVirtualAudioOutputIfUnused` 的排空回调在正常路径上都由主线程调用（`AudioOutput.swift` 的 `DispatchQueue.main.async` / `asyncAfter` / 同步返回），但打断路径上 `audioOutput.stop()` 可能跑在 `audioPreparationQueue`，此时回调也在那条队列上执行并写 `isAudioOutputReady` / `testToneStatus` / `activeMobileVoiceSource`。由于 `audioOutput` 标了 `nonisolated`，编译器不检查这一段。修复前后行为一致，且在此加跳转会改变排空时序（与 2026-08-21 排空卡死修复相邻），因此按最小修复范围**刻意未改动**，作为独立项记录。
+1. **`endSessionAfterDraining` 的完成回调线程未受隔离约束。** `stopPhoneVoice` 与 `releaseVirtualAudioOutputIfUnused` 的排空回调在正常路径上都由主线程调用（`AudioOutput.swift` 的 `DispatchQueue.main.async` / `asyncAfter` / 同步返回），但打断路径上 `audioOutput.stop()` 可能跑在 `audioPreparationQueue`，此时回调也在那条队列上执行并写 `isAudioOutputReady` / `testToneStatus` / `activeMobileVoiceSource`。由于 `audioOutput` 标了 `nonisolated`，编译器不检查这一段。修复前后行为一致，且在此加跳转会改变排空时序（与 2026-08-21 排空卡死修复相邻），因此按最小修复范围**刻意未改动**，作为独立项记录。
+
+## 后续修复：`isIdentityTrusted` 的同步信任查询（本仓库内完成）
+
+本文原先把这一项写成「需要供应商协议改成异步回答」的跨仓库改动，**这个判断是错的**，现予更正：协议改动只有在要把回调本身改成**异步**时才需要；只是让同步读取线程安全，完全不需要改 `phoneRemoteServer.isIdentityTrusted` / `watchBluetoothServer.isIdentityTrusted` 的签名，也不需要私有 iOS / 中继仓库配合。因此该修复已在本仓库完成，`BridgeAppModel.swift` 的两处回调签名与调用方式一字未改。
+
+**修复方式（一把锁、一份快照，无新存储层）**
+
+- `AppSettings.trustedPhoneIdentityTrustDates` 仍是 `@Published`，仍是 SwiftUI 观察的唯一主线程数据源；
+- 新增 `trustedPhoneIdentityLock`（`NSLock`）与 `lockedTrustedPhoneIdentityTrustDates`，`isPhoneIdentityTrusted` 只读后者；
+- 三条写入路径全部在同一把锁下同步快照：`trustPhoneIdentity`、`clearTrustedPhoneIdentities`（两者经属性 `didSet`，先更新快照再落盘），以及 `init` 里的迁移赋值（`didSet` 在 `init` 中不触发，因此单独加锁写入，与既有的手工回写同一处）；
+- 语义零改动：30 天有效期 `trustedPhoneIdentityLifetime` 与「未来时间戳视为过期」由未改动的 `isTrustCurrent` 判定；吊销即时性由「先更新快照、后落盘」保证，`clearTrustedPhoneIdentities()` 返回时并发读者已经读不到该设备。
+
+**为什么不会死锁**：这是一把叶子锁。临界区内只有一次字典查表或一次整字典赋值，不再加锁、不派发、不 `await`、不回调外部代码。传输线程永远不会等主线程，主线程也永远不会等传输线程。
+
+**线程消毒器的实测结论，必须如实记录**：
+
+```text
+$ swift test --sanitize=thread --scratch-path /tmp/tsan-scratch --filter TrustedDeviceExpiryTests
+EXIT_CODE=0
+✔ Test run with 6 tests in 1 suite passed；ThreadSanitizer 报告 0 条
+```
+
+修复**之前**用同一个新增测试跑同一条命令，退出码也是 0、同样 0 条报告。也就是说**本文原先「未同步的 Dictionary 读写竞态、可能崩溃」的表述，在当前 macOS / Combine 上无法用线程消毒器复现**。对照实验（临时文件，已删除）定位了原因，检测能力本身是好的：
+
+- 普通类的普通属性、`ObservableObject` 上的**非** `@Published` 属性：同样的读写形状，TSan 均报告数据竞态（退出码 1）；
+- 同一个类上的 `@Published` 属性、以及修复前的 `AppSettings.isPhoneIdentityTrusted`：TSan **不**报告。
+
+这与 Combine 在首次写入时给每个 `@Published` 字段装入带锁 subject 的实现一致——即字典存取实际上被 Combine 内部锁串行化了。这是**未公开的实现细节**，不是文档承诺的线程安全保证，而 Apple 对 `@Published` / `ObservableObject` 的要求是在主线程改动。因此这次修复的准确定性是：**消除对 Combine 内部锁的隐式依赖，让跨线程读取变成本仓库自己显式持有并可检查的约束**（也是将来若把 `AppSettings` 标成 `@MainActor` 时唯一能让这条同步查询继续存在的形态），**而不是**「修掉了一个已被消毒器证实的崩溃」。
+
+**新增测试的检测力（反向验证）**：`Tests/RemoteMicTests/ConfigurationImportValidationTests.swift` 的 `theTransportTrustQueryStaysCorrectWhileTheMainActorGrantsAndRevokes` 用后台队列持续同步查询、主线程反复授信与吊销，并先等到读线程确实活跃才开始写，保证真正重叠。把 `isPhoneIdentityTrusted` 里的加解锁临时去掉后：
+
+```text
+$ swift test --sanitize=thread --scratch-path /tmp/tsan-scratch \
+    --filter theTransportTrustQueryStaysCorrectWhileTheMainActorGrantsAndRevokes
+EXIT_CODE=1
+SUMMARY: ThreadSanitizer: data race AppSettings.swift:1340 in AppSettings.storeTrustedPhoneIdentitySnapshot(_:)
+SUMMARY: ThreadSanitizer: data race AppSettings.swift in AppSettings.isPhoneIdentityTrusted(_:at:)
+```
+
+即该测试确实驱动了两个线程对同一份信任存储的并发访问，快照一旦不加锁就会被抓到（上面的 `1340` 是临时去锁变体里那条写入语句的行号，去掉了读取处的 2 行加解锁，交付版本中该语句在 1342 行）；恢复后源文件与修复版逐字节一致（`sha256 = e0fd5734f66151307b2492a241cb5e5e7ba74f1a143632ee6bbdc13c015bb7ce`）。测试同时断言任何交错下都不成立的答案：从未批准的指纹、超过 30 天窗口后的同一批指纹、早于时间戳的同一批指纹必须全部为「不受信」，以及吊销在调用返回时立即生效。
+
+**验证**（各自单独执行，退出码单独一行）：
+
+```text
+$ swift build
+EXIT_CODE=0
+
+$ swift test
+EXIT_CODE=0
+✔ Test run with 353 tests in 32 suites passed after 18.260 seconds.
+
+$ ./scripts/test.sh
+EXIT_CODE=0
+RESULT passed=42 failed=0
+
+$ ./scripts/check-repository-boundaries.sh
+EXIT_CODE=0
+REPOSITORY BOUNDARY PASS
+```
+
+计数口径：基线 352 项 / 32 个 suite，新增 1 项并入既有 “Trusted device expiry” suite，最终 353 项 / 32 个 suite；未删除或弱化任何既有测试，新增编译警告 0 条（仍为既有 6 条）。
+
+**边界**：以上全部是自动化结果。真实 iPhone、真实 Apple Watch、真实遥控器与真实中继上的批准、免批准重连与吊销流程一次都没有执行，不能视为真机验收；四项 fork 专有行为同样只有自动化断言。

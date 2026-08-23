@@ -754,4 +754,130 @@ struct TrustedDeviceExpiryTests {
 
         #expect(settings.trustedPhoneIdentityFingerprints == ["identity-new"])
     }
+
+    /// The phone and watch transports call `isIdentityTrusted` on their own thread and need the
+    /// answer in their own stack frame, so that query cannot hop to the main actor. This harness
+    /// reproduces exactly that shape: one thread asking, while another grants and revokes.
+    ///
+    /// `@unchecked Sendable` is the same device the other suites in this target use: every field
+    /// is either immutable or guarded by `lock`, and `AppSettings` is what the test is
+    /// deliberately putting under concurrent access.
+    private final class TrustQueryRaceHarness: @unchecked Sendable {
+        private let settings: AppSettings
+        private let lock = NSLock()
+        private var stopped = false
+        private var completedReads = 0
+        private var violations: [String] = []
+
+        init(settings: AppSettings) {
+            self.settings = settings
+        }
+
+        var reads: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return completedReads
+        }
+
+        /// Answers that no interleaving may ever produce. Recorded rather than asserted on the
+        /// reading thread so a failure is reported by the test, not from a background queue.
+        var recordedViolations: [String] {
+            lock.lock()
+            defer { lock.unlock() }
+            return violations
+        }
+
+        func stop() {
+            lock.lock()
+            stopped = true
+            lock.unlock()
+        }
+
+        private var isStopped: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return stopped
+        }
+
+        /// `fingerprints` are the identities the writer churns, so their live answer is a race by
+        /// design and is not asserted. What is asserted are the three answers that stay fixed no
+        /// matter when the read lands: an identity that was never approved, the same identities
+        /// judged after the 30-day window, and the same identities judged before they were
+        /// stamped.
+        func readUntilStopped(_ fingerprints: [String], now: Date) {
+            let afterWindow = now.addingTimeInterval(
+                AppSettings.trustedPhoneIdentityLifetime + 24 * 60 * 60
+            )
+            let beforeApproval = now.addingTimeInterval(-24 * 60 * 60)
+            while !isStopped {
+                var found: [String] = []
+                for fingerprint in fingerprints {
+                    _ = settings.isPhoneIdentityTrusted(fingerprint)
+                    if settings.isPhoneIdentityTrusted(fingerprint, at: afterWindow) {
+                        found.append("expired_trusted:\(fingerprint)")
+                    }
+                    if settings.isPhoneIdentityTrusted(fingerprint, at: beforeApproval) {
+                        found.append("future_stamp_trusted:\(fingerprint)")
+                    }
+                }
+                if settings.isPhoneIdentityTrusted("identity-never-approved") {
+                    found.append("never_approved_trusted")
+                }
+                lock.lock()
+                completedReads += fingerprints.count
+                violations.append(contentsOf: found)
+                lock.unlock()
+            }
+        }
+    }
+
+    /// The defect this covers is not a stale answer: the transport thread was reading the same
+    /// Swift `Dictionary` the main actor was replacing, which can trap or corrupt rather than
+    /// merely answer wrongly. Run with `swift test --sanitize=thread` for that verdict; the
+    /// assertions below cover the semantics that must survive the concurrency.
+    @Test @MainActor
+    func theTransportTrustQueryStaysCorrectWhileTheMainActorGrantsAndRevokes() throws {
+        let (defaults, suiteName) = try isolatedDefaults("race")
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settings = AppSettings(defaults: defaults)
+        let fingerprints = (0..<6).map { "identity-race-\($0)" }
+        let harness = TrustQueryRaceHarness(settings: settings)
+        let reader = DispatchQueue(label: "TrustedDeviceExpiryTests.transportReader")
+        let readerFinished = DispatchSemaphore(value: 0)
+        let startedAt = Date()
+
+        reader.async {
+            harness.readUntilStopped(fingerprints, now: startedAt)
+            readerFinished.signal()
+        }
+
+        // Overlap has to be established, not hoped for: without waiting for the reader to be
+        // observably live, the writer loop below can finish before the reading thread starts and
+        // the test would exercise no concurrency at all.
+        let readerDeadline = Date().addingTimeInterval(5)
+        while harness.reads == 0, Date() < readerDeadline {
+            usleep(200)
+        }
+        #expect(harness.reads > 0, "the reading thread never started, so nothing was concurrent")
+
+        for round in 0..<300 {
+            let fingerprint = fingerprints[round % fingerprints.count]
+            for identity in fingerprints {
+                settings.trustPhoneIdentity(identity)
+            }
+            #expect(settings.isPhoneIdentityTrusted(fingerprint))
+
+            settings.clearTrustedPhoneIdentities()
+            // Revocation has to be visible on the query the transports use by the time the call
+            // returns, not on some later main-actor turn.
+            #expect(!settings.isPhoneIdentityTrusted(fingerprint))
+        }
+
+        harness.stop()
+        // Safe to wait here: the reader never needs the main actor, so it cannot be waiting on us.
+        readerFinished.wait()
+
+        #expect(harness.reads > 0)
+        #expect(harness.recordedViolations.isEmpty)
+    }
 }
