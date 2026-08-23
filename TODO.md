@@ -31,12 +31,12 @@
 | A4 | `251d3f3` | 实施 Agent | **否决 1 次**：被删掉的 8 秒循环原本是睡眠唤醒后唯一的自愈路径，改后桥会停在 `.connecting` 且零待处理项；另发现 `.unauthorized` 分支同样死锁 | [`BluetoothAbsentRemoteReconnect.md`](Testing/BluetoothAbsentRemoteReconnect.md) | 缺席 1 小时连接尝试 **328 → 1**、24 小时 **7855 → 1**（由代码延迟推导）；负向对照：策略改回即 3 项失败 |
 | A5 | `044f69f` | 实施 Agent | 通过（复核另指出该修复顺带修好了手机路径 `VoiceFunctionKeyLatch` 永久按下） | [`VoiceDrainInterruptionRecovery.md`](Testing/VoiceDrainInterruptionRecovery.md) | 4 次负向对照均 `completionCount → 0`；`.draining` 兜底失效即红 |
 | A6 | `b0270f4` | 实施 Agent | **否决 1 次**（文档同步）：`TODO.md` 该行仍写"待开始" | 并入 [`HIDMappingReadinessRetry.md`](Testing/HIDMappingReadinessRetry.md) | 21 个 case 各有唯一 token；40 次按键由 40 行折叠为 1 行；去掉白名单即 2 项失败 |
-| A7 | `550e685`、`1f821f3` | 实施 Agent ×2 | 通过（第二轮复核纠正了 3 个被高估的数字：负向对照 issue 数、以及"独立参考解码"实际用的是同一个生产解码器） | 并入相关手册 | 11 项事件回放；33 项文本断言 → 65 项行为断言；7 次负向对照实测"旧绿新红" |
+| A7 | `550e685`、`1f821f3`、`e5740be` | 实施 Agent ×3 | 通过（第二轮复核纠正了 3 个被高估的数字：负向对照 issue 数、以及"独立参考解码"实际用的是同一个生产解码器。第三轮复核实测切片区间未缩小——旧界定符第 1396 行 + 插入 33 行 = 新界定符第 1429 行，同为 92 行——并查出实施 Agent 报告的还原 sha256 与两个文件都不匹配，以及台账里"需要仓库尚不具备的快照能力"已被 A9 推翻） | 并入相关手册 | 11 项事件回放；33 项文本断言 → 65 项行为断言，另加电池图标/配色 2 项按 11 个边界实测；7 + 3 次负向对照实测"旧绿新红" |
 | A8 | `b308287` | 实施 Agent | 通过。复核独立复现了关键结论：**单标 `@MainActor` 抓不到该缺陷**——普通闭包字面量赋给非 `@Sendable` 回调会静默继承隔离，`-strict-concurrency=complete` 也不报 | 无（无用户可见行为变化） | 负向对照：还原原缺陷即 `mainThreadFlags` 非空；`build-app.sh` 退出 0 |
 | A9 | `8b30824` | 实施 Agent | 通过。复核另查出**第二条**同样被误标通过的记录：`CustomApplicationFocus.md` 曾勾选"中文字号均不小于 12pt"，而该页当时正有 51 处 10–11pt | [`InterfaceFontAndLocaleCompliance.md`](Testing/InterfaceFontAndLocaleCompliance.md) | 53 处改由 token 保证；字号低于 12 即红；旧 `cardWidth` 恢复后 4 项几何测试红 |
 | A10 | `3a0bd82` | 实施 Agent | **否决 1 次**：纯 ASCII bundle id 限制会让**已装在本机**的中文名 App（脚本编辑器导出的 `com.apple.ScriptEditor.id.阿里内外`）配置归零，复核用真实已装 App 端到端证明 | [`ConfigurationImportValidation.md`](Testing/ConfigurationImportValidation.md) | 3 次负向对照分别 6/5/4 项红；右 Command 侧别位往返保持 `0x0010_0010` 与键码 `[54]` |
 
-共享验证输出（最后一次全量）：`swift test` 退出 0，**339 项 / 30 套**；`scripts/test.sh` 退出 0，`RESULT passed=42 failed=0`；`check-repository-boundaries.sh` 退出 0；`build-app.sh` / `verify-app.sh` / `build-dmg.sh` / `verify-dmg.sh` / `build-driver-dmg.sh` 均退出 0。
+共享验证输出（最后一次全量）：`swift test` 退出 0，**354 项 / 32 套**；`scripts/test.sh` 退出 0，`RESULT passed=42 failed=0`；`check-repository-boundaries.sh` 退出 0；`build-app.sh` / `verify-app.sh` / `build-dmg.sh` / `verify-dmg.sh` / `build-driver-dmg.sh` 均退出 0。
 
 **尚未验证（不得表述为已验收）**：10 项修复**全部没有真机验证**，界面也从未被渲染或截图。发布前的真机验收清单见上表各手册；`Release` 本身在真机验收通过前不发。
 
