@@ -149,3 +149,20 @@ REMOTE_MIC_SETTINGS_SCREENSHOT_LANGUAGE=zh-Hans \
   - 英文授权弹窗文案比中文长，实际弹窗宽度与换行未验证。
   - 用例 3B 依赖截图渲染工具，其结果不等于真实可交互窗口。
 - **已知未解决、需用户决策**：`AGENTS.md:64` 要求在 `800 × 650` 窗口逐一点击侧边栏，但生产 `minSize` 为 `1020 × 772`，该窗口尺寸不可达，门禁按字面无法执行。本次**未改** `AGENTS.md`，也**未改** `minSize`；结论与建议见 [`Bugs/2026-08-21-interface-breaks-the-projects-own-font-and-locale-rules.md`](../Bugs/2026-08-21-interface-breaks-the-projects-own-font-and-locale-rules.md) 的 A9-4 一节。在该项决策前，用例 3A 用生产最小窗口、用例 3B 用截图工具，二者共同替代原门禁措辞。
+
+## 自动渲染门禁能证明什么、不能证明什么
+
+`Tests/RemoteMicTests/SettingsPageRenderingTests.swift` 会用仓库自带的离屏渲染器把 5 个设置页在
+`1020 × 772` 与 `800 × 650`、中英双语、浅色与深色下各渲染一遍。
+
+**能证明**：页面不崩、数量为 5、渲染结果没有改变请求的窗口几何（对应 `AGENTS.md`「不得改变窗口几何」）、
+映射页确实画出了遥控器图（即卡片没有把它整块盖掉）。
+
+**不能证明字号与文案**：约一半界面字符串走 SwiftUI 的 `Text("some.key")`，它按**主 bundle** 查表。
+在 `swift test` 进程里主 bundle 是测试宿主，不含 `.lproj`，所以这些字符串会渲染成原始键名
+（例如 `statistics.voice_ranking.title`）。**这是测试环境现象，不是 App 缺陷**——App 里
+`SettingsView` 设置了 `.environment(\.locale, localization.locale)`，且 App bundle 带完整资源表。
+
+因此本手册第 1–5 项的目视检查**不能**用自动渲染代替，仍必须由人在真实窗口里逐页确认。想拿到
+文案正确的截图，只能用 App 二进制配合 `REMOTE_MIC_SETTINGS_SCREENSHOT_DIR`，且需要一个真实的
+图形会话（无会话时进程会被 SIGKILL）。
