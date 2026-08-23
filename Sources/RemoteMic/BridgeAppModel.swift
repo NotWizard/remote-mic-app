@@ -4,7 +4,15 @@ import CoreAudio
 import Foundation
 import SayAllMacRemoteCore
 
-private enum MobileVoiceSource {
+/// Which of the three mobile transports currently owns the single voice channel.
+///
+/// Internal rather than file-private only so the arbitration between the iPhone, the Apple
+/// Watch and the phone web page can be driven from tests. The watch backlog defect of
+/// 2026-08-15 was exactly a missing distinction here — both nearby transports shared one
+/// marker, so the watch's late stop released the iPhone's session — and the transports
+/// themselves cannot be injected, so this enum is the narrowest seam that makes the rule
+/// assertable. See Bugs/2026-08-15-watch-ble-audio-backlog-blocks-iphone/DEBUG.md.
+enum MobileVoiceSource {
     case nearbyPhone
     case nearbyWatch
     case web
@@ -165,7 +173,15 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
     private var voiceSessionUsageSource: UsageEventSource?
     private var bluetoothVoiceActive = false
     private var loggedBluetoothVoiceAudioDeviceIdentifier: UUID?
-    private var activeMobileVoiceSource: MobileVoiceSource?
+    /// Holder of the single mobile voice channel, or `nil` when it is free.
+    ///
+    /// Internal rather than private so a test can start from "the iPhone already holds the
+    /// channel". Acquiring it for real is not available to a unit test: `startPhoneVoice`
+    /// binds the virtual audio device and then latches the system voice key through
+    /// `KeyboardInjector`, which on a machine that has the audio driver installed would
+    /// press a real modifier. Production only writes this from `startPhoneVoice`,
+    /// `stopPhoneVoice` and `stop()`.
+    var activeMobileVoiceSource: MobileVoiceSource?
     private var mobileVoiceAudioBatchCount = 0
     private var mobileVoiceAudioEnqueueFailureCount = 0
     private var mobileVoiceAudioSourceMismatchCount = 0
@@ -199,7 +215,14 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
     private var hidAllowedLocationIDs: Set<UInt32>?
     private var hidMappingRetryWorkItem: DispatchWorkItem?
     private var hidMappingRetryAttempts = 0
-    private var started = false
+    /// Whether `startIfNeeded()` has run.
+    ///
+    /// Internal rather than private so a test can reach the connection entry points, which
+    /// are all gated on it. Running the real `startIfNeeded()` in a unit test is not an
+    /// option: it schedules CoreAudio device binding, creates a `CBCentralManager` (which
+    /// prompts for Bluetooth access) and can request Input Monitoring or Accessibility.
+    /// Production only writes this from `startIfNeeded()` and `stop()`.
+    var started = false
     private var terminationObserver: NSObjectProtocol?
     private var completedUpdateHIDRecoveryWorkItem: DispatchWorkItem?
     private let audioPreparationQueue = DispatchQueue(label: "RemoteMic.audioPreparation", qos: .userInitiated)
@@ -1715,7 +1738,11 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
     /// Callers hop at the transport boundary, so this runs on the main actor already. The
     /// enabled-check stays immediately before the alert is built: that is the "reject the
     /// late request instead of re-opening the modal" rule from the cancel-waiting fix.
-    private func requestPhoneApproval(
+    ///
+    /// Internal for test access. A test may only call this while the listener is disabled;
+    /// that path answers `false` and returns without building the alert, whereas the
+    /// enabled path runs a modal and would block the suite.
+    func requestPhoneApproval(
         deviceName: String,
         pairingCode: String,
         identityFingerprint: String?,
@@ -2160,7 +2187,13 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         longRecordingCloseTimer = nil
     }
 
-    private func startPhoneVoice(source: MobileVoiceSource) -> RemoteVoiceStartResult {
+    /// Claims the single mobile voice channel for `source`, or reports why it cannot.
+    ///
+    /// Internal for test access. A test may only call this with the channel already held:
+    /// the `.busy` arbitration below is the first gate, so a rejected request touches
+    /// neither the audio device nor the voice key, while an admitted one would bind the
+    /// virtual device and latch a real modifier.
+    func startPhoneVoice(source: MobileVoiceSource) -> RemoteVoiceStartResult {
         guard activeMobileVoiceSource == nil else {
             AppLogger.shared.write(
                 "MOBILE VOICE start_rejected reason=busy requested=\(source.logName) " +
@@ -2192,7 +2225,9 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         return .started
     }
 
-    private func stopPhoneVoice(source: MobileVoiceSource) {
+    /// Releases the mobile voice channel, but only for the source that holds it. Internal
+    /// for test access.
+    func stopPhoneVoice(source: MobileVoiceSource) {
         guard activeMobileVoiceSource == source else {
             AppLogger.shared.write(
                 "MOBILE VOICE stop_ignored requested=\(source.logName) " +
@@ -2351,7 +2386,8 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         }
     }
 
-    private func receivePhoneAudio(_ samples: [Int16], source: MobileVoiceSource) {
+    /// Accepts audio only from the source that holds the channel. Internal for test access.
+    func receivePhoneAudio(_ samples: [Int16], source: MobileVoiceSource) {
         guard activeMobileVoiceSource == source else {
             mobileVoiceAudioSourceMismatchCount += 1
             if mobileVoiceAudioSourceMismatchCount == 1 ||

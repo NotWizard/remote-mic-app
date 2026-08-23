@@ -1,10 +1,55 @@
 import Foundation
+import SayAllMacRemoteCore
 import SwiftUI
 import Testing
 @testable import RemoteMic
 
 @Suite("Settings page regression")
 struct SettingsPageRegressionTests {
+    /// Records every line the shared logger actually writes.
+    ///
+    /// `AppLogger` notifies observers synchronously from the writing thread, so a lock is
+    /// required rather than optional. Suppressed (folded) lines never reach observers, but
+    /// none of the messages asserted here are foldable.
+    private final class LogSink: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storage: [String] = []
+
+        func record(_ line: String) {
+            lock.lock()
+            storage.append(line)
+            lock.unlock()
+        }
+
+        var lines: [String] {
+            lock.lock()
+            defer { lock.unlock() }
+            return storage
+        }
+
+        /// The logger is process-global and suites run in parallel, so every needle used
+        /// with this has to name the source it belongs to.
+        func count(of needle: String) -> Int {
+            lines.filter { $0.contains(needle) }.count
+        }
+    }
+
+    private struct SettingsScope {
+        let settings: AppSettings
+        let defaults: UserDefaults
+        let name: String
+
+        func tearDown() {
+            defaults.removePersistentDomain(forName: name)
+        }
+    }
+
+    private static func scopedSettings(_ label: String) throws -> SettingsScope {
+        let name = "SettingsPageRegressionTests.\(label).\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        return SettingsScope(settings: AppSettings(defaults: defaults), defaults: defaults, name: name)
+    }
+
     @Test func applicationEditMenuPreservesStandardTextEditingShortcuts() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -49,52 +94,232 @@ struct SettingsPageRegressionTests {
         #endif
     }
 
-    @Test func nearbyMobileListenerOnlyStartsFromAUserConnectionEntry() throws {
-        let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let source = try String(
-            contentsOf: root.appendingPathComponent("Sources/RemoteMic/BridgeAppModel.swift"),
-            encoding: .utf8
-        )
+    /// Both nearby listeners are user-initiated, one switch owns both, and an approval that
+    /// arrives after the switch went off is refused.
+    ///
+    /// This replaces fourteen substring assertions on `BridgeAppModel.swift`: that the text
+    /// between `func startIfNeeded()` and `func stop()` did not mention
+    /// `phoneRemoteServer.start()`, that `enablePhoneRemoteConnection()` did mention it and
+    /// `watchBluetoothServer.start()`, that the file somewhere contained
+    /// `phoneRemoteServer.stop()`, `watchBluetoothServer.stop()`,
+    /// `func disablePhoneRemoteConnection()`, `func togglePhoneRemoteConnection()` and two
+    /// particular `guard` statements. Every one of those substrings survived the 366-line
+    /// main-actor rewrite of this file with an identical occurrence count — including
+    /// `guard self.isPhoneRemoteConnectionEnabled else`, whose surrounding
+    /// `DispatchQueue.main.async` was deleted in that commit while the assertion demanding
+    /// the guard text stayed green.
+    ///
+    /// The fork-local transports are no-ops that record nothing, so "the listener came up"
+    /// is observed through the line each transport writes through its injected logger when
+    /// it is started. That is the only evidence available that both transports were reached
+    /// rather than just the phone; it is fork-stub-specific and would need revisiting if the
+    /// private package is ever restored.
+    @MainActor
+    @Test func nearbyMobileListenersComeUpOnlyFromAUserConnectionEntry() throws {
+        let scope = try Self.scopedSettings("nearbyEntry")
+        defer { scope.tearDown() }
+        let model = BridgeAppModel(settings: scope.settings)
+        let sink = LogSink()
+        let token = AppLogger.shared.addWriteObserver { sink.record($0) }
+        defer { AppLogger.shared.removeWriteObserver(token) }
 
-        let startup = try #require(source.range(of: "func startIfNeeded()"))
-        let stop = try #require(source.range(
-            of: "func stop()",
-            range: startup.upperBound..<source.endIndex
-        ))
-        let startupSource = source[startup.lowerBound..<stop.lowerBound]
-        #expect(!startupSource.contains("phoneRemoteServer.start()"))
-        #expect(!startupSource.contains("watchBluetoothServer.start()"))
+        // Constructed but not started: nothing listens and nothing is connected.
+        #expect(!model.isPhoneRemoteConnectionEnabled)
+        #expect(!model.isWatchRemoteConnectionEnabled)
+        #expect(!model.isPhoneRemoteConnected)
+        #expect(!model.isWatchRemoteConnected)
+        #expect(model.webRemoteState == .disabled)
 
-        let phoneEntry = try #require(source.range(of: "func enablePhoneRemoteConnection()"))
-        let watchEntry = try #require(source.range(
-            of: "func enableWatchRemoteConnection()",
-            range: phoneEntry.upperBound..<source.endIndex
-        ))
-        let phoneEntrySource = source[phoneEntry.lowerBound..<watchEntry.lowerBound]
-        #expect(phoneEntrySource.contains("phoneRemoteServer.start()"))
-        #expect(phoneEntrySource.contains("watchBluetoothServer.start()"))
+        // Launch alone must never bring a listener up. Every connection entry point is
+        // gated on the app having started, so all four are inert here — this is the
+        // property the old `startIfNeeded()` text search was standing in for, and unlike
+        // that search it does not care where in the file the calls live.
+        model.togglePhoneRemoteConnection()
+        model.toggleWatchRemoteConnection()
+        model.enablePhoneRemoteConnection()
+        model.enableWatchRemoteConnection()
+        model.enableWebRemoteConnection()
+        AppLogger.shared.flush()
+        #expect(!model.isPhoneRemoteConnectionEnabled)
+        #expect(!model.isWatchRemoteConnectionEnabled)
+        #expect(model.webRemoteState == .disabled)
+        #expect(sink.count(of: "PHONE REMOTE enabled_by_user") == 0)
+        #expect(sink.count(of: "PHONE REMOTE unavailable_in_fork_build") == 0)
+        #expect(sink.count(of: "WATCH REMOTE unavailable_in_fork_build") == 0)
 
-        let webEntry = try #require(source.range(
-            of: "func enableWebRemoteConnection()",
-            range: watchEntry.upperBound..<source.endIndex
-        ))
-        let watchEntrySource = source[watchEntry.lowerBound..<webEntry.lowerBound]
-        #expect(watchEntrySource.contains("enablePhoneRemoteConnection()"))
-        #expect(source.contains("func disablePhoneRemoteConnection()"))
-        #expect(source.contains("phoneRemoteServer.stop()"))
-        #expect(source.contains("watchBluetoothServer.stop()"))
-        #expect(source.contains("watchBluetoothServer.updateButtonTitles(titles)"))
-        #expect(source.contains("func togglePhoneRemoteConnection()"))
-        #expect(source.contains("LocalizedMessage(\"connection.phone.cancel_waiting\")"))
-        #expect(source.contains("response == .alertThirdButtonReturn"))
-        #expect(source.contains("guard let self, self.isPhoneRemoteConnectionEnabled else"))
-        #expect(source.contains("guard self.isPhoneRemoteConnectionEnabled else"))
+        model.started = true
+
+        // One user entry starts both nearby transports, not just the phone.
+        model.togglePhoneRemoteConnection()
+        AppLogger.shared.flush()
+        #expect(model.isPhoneRemoteConnectionEnabled)
+        #expect(model.isWatchRemoteConnectionEnabled)
+        #expect(sink.count(of: "PHONE REMOTE enabled_by_user") == 1)
+        #expect(sink.count(of: "PHONE REMOTE unavailable_in_fork_build") == 1)
+        #expect(sink.count(of: "WATCH REMOTE unavailable_in_fork_build") == 1)
+
+        // Asking again while it is already on must change nothing. A second start would
+        // leave the first listener behind, advertising the Mac twice.
+        model.enablePhoneRemoteConnection()
+        model.enableWatchRemoteConnection()
+        AppLogger.shared.flush()
+        #expect(sink.count(of: "PHONE REMOTE enabled_by_user") == 1)
+        #expect(sink.count(of: "PHONE REMOTE unavailable_in_fork_build") == 1)
+        #expect(sink.count(of: "WATCH REMOTE unavailable_in_fork_build") == 1)
+
+        // The watch entry is the same switch as the phone entry, so turning it off from
+        // the watch row clears both rows.
+        model.toggleWatchRemoteConnection()
+        AppLogger.shared.flush()
+        #expect(!model.isPhoneRemoteConnectionEnabled)
+        #expect(!model.isWatchRemoteConnectionEnabled)
+        #expect(!model.isPhoneRemoteConnected)
+        #expect(!model.isWatchRemoteConnected)
+        #expect(sink.count(of: "PHONE REMOTE disabled_by_user") == 1)
+
+        // And a second off is a no-op rather than a second teardown.
+        model.disablePhoneRemoteConnection()
+        AppLogger.shared.flush()
+        #expect(sink.count(of: "PHONE REMOTE disabled_by_user") == 1)
+
+        // An approval that arrives after the user stopped listening is refused without
+        // presenting anything, and the phone is not remembered as trusted. The old test
+        // asserted the text of the guard that does this.
+        let fingerprint = "SettingsPageRegressionTests-\(UUID().uuidString)"
+        var answers: [Bool] = []
+        model.requestPhoneApproval(
+            deviceName: "iPhone",
+            pairingCode: "123456",
+            identityFingerprint: fingerprint
+        ) { answers.append($0) }
+        #expect(answers == [false])
+        #expect(!scope.settings.isPhoneIdentityTrusted(fingerprint))
+        #expect(!model.isPhoneRemoteConnectionEnabled)
     }
 
-    @Test func iphoneAndWatchVoiceSessionsRemainSourceIsolated() throws {
+    /// One mobile voice source owns the channel; the others are refused and cannot end it.
+    ///
+    /// This replaces ten substring assertions on `BridgeAppModel.swift` (`case nearbyPhone`,
+    /// `case nearbyWatch`, `phoneRemoteServer.onVoiceStartResult`,
+    /// `startPhoneVoice(source: .nearbyPhone)`, `stopPhoneVoice(source: .nearbyPhone)`, the
+    /// watch equivalents, `return .busy`, and that `startPhoneVoice(source: .nearby)` was
+    /// absent). All ten had identical occurrence counts before and after the main-actor
+    /// rewrite of this file, so they tracked nothing that commit could have broken.
+    ///
+    /// The rule they stood in for is the fix for the watch BLE backlog defect of
+    /// 2026-08-15: both nearby transports used to share one source marker, so the watch's
+    /// stop — which arrived about 28 seconds late behind its own audio backlog — ended the
+    /// iPhone's session and left the channel occupied for the next iPhone request.
+    ///
+    /// `startPhoneVoice` is only ever called here with the channel already held. The busy
+    /// arbitration is its first gate, so a refused request touches no hardware, whereas an
+    /// admitted one would bind the virtual audio device and latch a real modifier key on a
+    /// machine that has the driver installed.
+    @MainActor
+    @Test func oneMobileVoiceSourceOwnsTheChannelAndTheOthersAreRefused() throws {
+        let scope = try Self.scopedSettings("voiceIsolation")
+        defer { scope.tearDown() }
+        let model = BridgeAppModel(settings: scope.settings)
+        let sink = LogSink()
+        let token = AppLogger.shared.addWriteObserver { sink.record($0) }
+        defer { AppLogger.shared.removeWriteObserver(token) }
+
+        // The iPhone holds the channel.
+        model.activeMobileVoiceSource = .nearbyPhone
+
+        // The watch, the web page, and even a duplicate request from the holder itself are
+        // all refused, and none of them takes the channel over.
+        #expect(model.startPhoneVoice(source: .nearbyWatch) == .busy)
+        #expect(model.activeMobileVoiceSource == .nearbyPhone)
+        #expect(model.startPhoneVoice(source: .web) == .busy)
+        #expect(model.activeMobileVoiceSource == .nearbyPhone)
+        #expect(model.startPhoneVoice(source: .nearbyPhone) == .busy)
+        #expect(model.activeMobileVoiceSource == .nearbyPhone)
+        AppLogger.shared.flush()
+        #expect(sink.count(
+            of: "MOBILE VOICE start_rejected reason=busy requested=watch active=iphone"
+        ) == 1)
+        #expect(sink.count(
+            of: "MOBILE VOICE start_rejected reason=busy requested=web active=iphone"
+        ) == 1)
+        #expect(sink.count(
+            of: "MOBILE VOICE start_rejected reason=busy requested=iphone active=iphone"
+        ) == 1)
+        // A refused request must not open a session of its own.
+        #expect(sink.count(of: "MOBILE VOICE started source=") == 0)
+        #expect(!model.isStreaming)
+
+        // A stop from a source that does not hold the channel must not release it. This is
+        // the 2026-08-15 defect itself.
+        model.stopPhoneVoice(source: .nearbyWatch)
+        #expect(model.activeMobileVoiceSource == .nearbyPhone)
+        model.stopPhoneVoice(source: .web)
+        #expect(model.activeMobileVoiceSource == .nearbyPhone)
+        AppLogger.shared.flush()
+        #expect(sink.count(of: "MOBILE VOICE stop_ignored requested=watch active=iphone") == 1)
+        #expect(sink.count(of: "MOBILE VOICE stop_ignored requested=web active=iphone") == 1)
+        #expect(sink.count(of: "MOBILE VOICE stopped source=iphone") == 0)
+
+        // Audio from a source that does not hold the channel is dropped rather than mixed
+        // into the live session.
+        model.receivePhoneAudio([1, 2, 3, 4], source: .nearbyWatch)
+        AppLogger.shared.flush()
+        #expect(sink.count(
+            of: "MOBILE VOICE audio_dropped reason=source_mismatch requested=watch " +
+                "active=iphone count=1"
+        ) == 1)
+        // The next mismatch is counted but deliberately not written: only the first and
+        // then every twentieth is reported, so misrouted audio cannot flood the log.
+        model.receivePhoneAudio([5, 6], source: .web)
+        AppLogger.shared.flush()
+        #expect(sink.count(
+            of: "MOBILE VOICE audio_dropped reason=source_mismatch requested=web"
+        ) == 0)
+        #expect(sink.count(of: "MOBILE VOICE audio source=iphone") == 0)
+
+        // Positive control. Everything above would also hold for an implementation that
+        // simply refused every source, so the holder's own audio and its own stop have to
+        // be accepted. There is no audio device in a test process, which is why the
+        // accounting reports the write as rejected rather than played.
+        model.receivePhoneAudio([7, 8], source: .nearbyPhone)
+        AppLogger.shared.flush()
+        #expect(sink.lines.contains {
+            $0.contains("MOBILE VOICE audio source=iphone batches=1 samples=2 nonzero=2")
+                && $0.contains("accepted=false enqueue_failures=1")
+        })
+
+        model.stopPhoneVoice(source: .nearbyPhone)
+        AppLogger.shared.flush()
+        #expect(model.activeMobileVoiceSource == nil)
+        #expect(sink.count(of: "MOBILE VOICE stopped source=iphone") == 1)
+        // The closing summary carries both mismatches, including the one that was counted
+        // without being reported.
+        #expect(sink.lines.contains {
+            $0.contains("MOBILE VOICE audio_summary source=iphone reason=voice_stop")
+                && $0.contains("source_mismatches=2")
+        })
+
+        // With the channel free, a further stop is ignored rather than reported twice.
+        model.stopPhoneVoice(source: .nearbyPhone)
+        AppLogger.shared.flush()
+        #expect(sink.count(of: "MOBILE VOICE stop_ignored requested=iphone active=none") == 1)
+        #expect(sink.count(of: "MOBILE VOICE stopped source=iphone") == 1)
+    }
+
+    /// Three assertions from the two tests above that have no runtime surface, kept rather
+    /// than dropped.
+    ///
+    /// - `watchBluetoothServer.updateButtonTitles(titles)`: the fork-local transport's
+    ///   `updateButtonTitles` is an empty method that logs nothing and exposes nothing, so
+    ///   whether the watch received the titles is not observable from this repository.
+    /// - `connection.phone.cancel_waiting` and `response == .alertThirdButtonReturn`: both
+    ///   belong to the third button of a modal `NSAlert`. Reaching them requires
+    ///   `runModal()`, which would block the suite, and there is no injectable presenter.
+    ///
+    /// The neighbouring refusal path — a late approval answered `false` without presenting
+    /// anything — is covered behaviourally in
+    /// `nearbyMobileListenersComeUpOnlyFromAUserConnectionEntry`.
+    @Test func connectionApprovalPartsWithoutARuntimeSurfaceStayDeclared() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -104,16 +329,9 @@ struct SettingsPageRegressionTests {
             encoding: .utf8
         )
 
-        #expect(source.contains("case nearbyPhone"))
-        #expect(source.contains("case nearbyWatch"))
-        #expect(source.contains("phoneRemoteServer.onVoiceStartResult"))
-        #expect(source.contains("startPhoneVoice(source: .nearbyPhone)"))
-        #expect(source.contains("stopPhoneVoice(source: .nearbyPhone)"))
-        #expect(source.contains("watchBluetoothServer.onVoiceStartResult"))
-        #expect(source.contains("startPhoneVoice(source: .nearbyWatch)"))
-        #expect(source.contains("stopPhoneVoice(source: .nearbyWatch)"))
-        #expect(source.contains("return .busy"))
-        #expect(!source.contains("startPhoneVoice(source: .nearby)"))
+        #expect(source.contains("watchBluetoothServer.updateButtonTitles(titles)"))
+        #expect(source.contains("LocalizedMessage(\"connection.phone.cancel_waiting\")"))
+        #expect(source.contains("response == .alertThirdButtonReturn"))
     }
 
     @Test func mobileConnectionStatusMeetsFontAndSnapshotGates() throws {
