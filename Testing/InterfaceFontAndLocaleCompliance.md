@@ -75,6 +75,34 @@ REMOTE_MIC_SETTINGS_SCREENSHOT_LANGUAGE=zh-Hans \
 
 > 修复前该尺寸下每侧卡片盖住照片 47.5pt，可用上一正式版 App 生成同尺寸截图做对照。
 
+### 3C 生产 minSize 字号与文案复核（2026-08-24 已执行一次）
+
+同一渲染工具在生产 `minSize` 下也能跑，命令与 3B 相同、只把尺寸换成当前 `minSize`
+（读 `RemoteMicApp.swift`，当时为 `1020x772`），中英各跑一次：
+
+```
+REMOTE_MIC_SETTINGS_SCREENSHOT_DIR=<输出目录> \
+REMOTE_MIC_SETTINGS_SCREENSHOT_SIZE=1020x772 \
+REMOTE_MIC_SETTINGS_SCREENSHOT_LANGUAGE=zh-Hans \
+"dist/Remote Mic.app/Contents/MacOS/RemoteMic"
+```
+
+实测退出码 0，中英各出 5 张 PNG。**关键点：必须用 App bundle 里的二进制**，因为
+`Package.swift` 没有声明 `resources:`，测试进程里不存在含 `.lproj` 的 bundle，
+`Text("key")` 会渲染成原始键名；App bundle 自带资源表，渲染的是真实文案。
+
+当次观察（`zh-Hans`，1020×772）：
+
+- 按键映射页：中文全部为真实文案且清晰可读，无一处目视低于 12pt；遥控器照片完整可见、
+  两侧卡片未覆盖；`单击/双击/长按` 三个触发按钮不重叠、不溢出卡片；无截断。
+- 关于页：`当前版本` 为 `1.8.25-fork.4`，28pt 显示完整，未换行未截断——版本号由 6 字符
+  变 13 字符后的溢出风险由此排除。
+- 统计页：真实中文（`单次语音时长排行` 等）。此前测试进程截图里出现的
+  `statistics.voice_ranking.title` 之类原始键名**是测试宿主 bundle 缺资源导致的假象，不是产品缺陷**。
+
+**这一步的边界**：离屏渲染只能验证文案、字号观感、布局与截断，**不等于真实窗口验收**。
+窗口几何、拖拽缩放、实时交互、系统外观切换仍必须在有 GUI 会话的真机上按用例 3A 做。
+
 ## 用例 4：iPhone 与 Apple Watch 授权弹窗本地化（英文必做）
 
 1. 语言设为 **English**，`连接` → 「Connect Phone」进入等待。

@@ -5,6 +5,7 @@ dist/
 *.xcuserstate
 .DS_Store
 .codex-screenshots/
+.render-check/
 .private-dependencies/
 
 # Local credentials, signing identities, and notarization material.
