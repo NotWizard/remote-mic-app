@@ -36,7 +36,7 @@ jobs:
       - name: Reconcile release provenance
         env:
           GH_TOKEN: ${{ github.token }}
-          STABLE_RELEASE_ACTORS: HD838A
+          STABLE_RELEASE_ACTORS: NotWizard
         run: |
           ./scripts/reconcile-release-event.sh \
             "${{ github.event.inputs.tag || github.event.release.tag_name }}" \

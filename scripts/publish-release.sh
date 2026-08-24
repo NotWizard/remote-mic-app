@@ -5,11 +5,12 @@ umask 022
 ROOT="${0:A:h:h}"
 OUTPUT_DIR="$ROOT/dist"
 PLIST="$ROOT/Resources/Info.plist"
-REPOSITORY="HD838A/remote-mic-app"
+source "$ROOT/scripts/release-signing-mode.sh"
+REPOSITORY="NotWizard/remote-mic-app"
 MODE="${1:-}"
 DRY_RUN="${DRY_RUN:-0}"
 PUBLIC_DOWNLOAD_CONCURRENCY="${PUBLIC_DOWNLOAD_CONCURRENCY:-4}"
-EXPECTED_DEVELOPER_TEAM_ID="${EXPECTED_DEVELOPER_TEAM_ID:-L3QHLDRPAY}"
+EXPECTED_DEVELOPER_TEAM_ID="${EXPECTED_DEVELOPER_TEAM_ID:-$RELEASE_MODE_DEFAULT_DEVELOPER_TEAM_ID}"
 PLIST_VERSION="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$PLIST")"
 PLIST_BUILD="$(/usr/bin/plutil -extract CFBundleVersion raw -o - "$PLIST")"
 REQUESTED_RELEASE_TAG="${RELEASE_TAG:-}"
@@ -51,10 +52,10 @@ if [[ ! "$PUBLIC_DOWNLOAD_CONCURRENCY" =~ '^[1-9][0-9]*$' ]] || \
   print -u2 "PUBLIC_DOWNLOAD_CONCURRENCY must be between 1 and 8"
   exit 1
 fi
-if [[ "$EXPECTED_DEVELOPER_TEAM_ID" != "L3QHLDRPAY" ]]; then
-  print -u2 "refusing to publish for an unexpected Apple Developer Team"
-  exit 1
-fi
+require_release_developer_team "$EXPECTED_DEVELOPER_TEAM_ID"
+# Printed here, before any artifact is read or any release is created, so an
+# ad-hoc publish names everything it cannot prove at the top of its own log.
+release_signing_mode_report
 if [[ "$MODE" == "prerelease" ]]; then
   RELEASE_TAG="${REQUESTED_RELEASE_TAG:-v$VERSION}"
   if [[ "$RELEASE_TAG" != "v$VERSION" ]]; then
@@ -248,13 +249,22 @@ verify_local_artifacts() {
   test -f "$INTEL_UPDATE_ZIP"
   test -f "$INTEL_APPCAST"
 
-  export EXPECTED_DEVELOPER_TEAM_ID REQUIRE_DEVELOPER_ID_SIGNING=1 REQUIRE_NOTARIZATION=1
+  export EXPECTED_DEVELOPER_TEAM_ID RELEASE_SIGNING_MODE
+  export REQUIRE_DEVELOPER_ID_SIGNING="$RELEASE_MODE_REQUIRE_DEVELOPER_ID_SIGNING"
+  export REQUIRE_NOTARIZATION="$RELEASE_MODE_REQUIRE_NOTARIZATION"
   verify_update_zip "$UPDATE_ZIP" apple-silicon
   verify_update_zip "$INTEL_UPDATE_ZIP" intel
   "$ROOT/scripts/verify-doubao-driver-pkg.sh" "$UNINSTALL_PACKAGE" uninstall
   "$ROOT/scripts/verify-dmg.sh" "$DMG"
   RELEASE_VARIANT=intel "$ROOT/scripts/verify-doubao-driver-pkg.sh" "$INTEL_UNINSTALL_PACKAGE" uninstall
   RELEASE_VARIANT=intel "$ROOT/scripts/verify-dmg.sh" "$INTEL_DMG"
+
+  # Nothing here used to look at the signature at all, only at the URLs and the
+  # version numbers. An appcast whose enclosure signature is empty or truncated
+  # satisfies every check below and is refused by every installed copy, which is
+  # the one failure that cannot be fixed after the bytes are public.
+  require_signed_appcast "$APPCAST" "${APPCAST:t}"
+  require_signed_appcast "$INTEL_APPCAST" "${INTEL_APPCAST:t}"
 
   rg -Fq "url=\"$CDN_DOWNLOAD_PREFIX${UPDATE_ZIP:t}\"" "$APPCAST"
   rg -Fq "$CDN_DOWNLOAD_PREFIX${ZH_RELEASE_NOTES:t}" "$APPCAST"
@@ -716,6 +726,7 @@ if [[ "$MODE" == "prerelease" ]]; then
     print "TAG: $RELEASE_TAG"
     print "VERSION: $VERSION ($BUILD)"
     print "TITLE: $RELEASE_TITLE"
+    release_signing_mode_report
     exit 0
   fi
 
@@ -759,6 +770,7 @@ if [[ "$MODE" == "prerelease" ]]; then
     -f "tag=$RELEASE_TAG"
   print "PREVIEW MAIN RECORDING DISPATCHED: $RELEASE_TAG"
   print "PRE-RELEASE PUBLISH PASS: https://github.com/$REPOSITORY/releases/tag/$RELEASE_TAG"
+  release_signing_mode_report
   exit 0
 fi
 

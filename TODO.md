@@ -64,8 +64,13 @@
   - README 中英文已去除二维码、加群、TestFlight 和官网推广内容，改为说明 fork 血缘、本分支改动与构建方式，并补充 GitHub 标签。
 - [ ] 本 fork 的 CI 与二进制发布前置条件
   - `.github/workflows/` 仍会 checkout `sayall-ai`、`sayall-macro-platform`、`sayall-mac-remote` 三个私有仓库，本仓库无访问权限，fork CI 必然失败。需要决定是禁用这些 workflow、改为只跑 stub 构建，还是申请访问权限。
-  - [x] Sparkle 静默覆盖风险已解决：`scripts/release-variant.sh` 与 `Resources/Info.plist` 的更新源已改为本仓库，`SUEnableAutomaticChecks` 关闭，`scripts/verify-app.sh` 的断言同步更新。已可发布 ad-hoc DMG，代价是升级需手动下载。
-  - Gatekeeper 拦截未解决：没有 Apple Developer ID 证书，只能 ad-hoc 签名，首次打开需右键“打开”。需要付费开发者账号才能签名并公证。
+  - [x] Sparkle 更新源与签名身份已完全归属本仓库：`Resources/Info.plist` 与 `scripts/release-variant.sh` 的 feed 指向本仓库，`Sources/RemoteMic/RemoteMicApp.swift` 的 Releases API 与 `Sources/RemoteMic/AppLinks.swift` 的 GitHub 链接一并改为本仓库；`SUEnableAutomaticChecks` 已改为开启，`SUPublicEDKey` 已换成本 fork 新生成的 EdDSA 公钥 `+EyNzAtTgwbJ4/04/ujn/JrpA0NKLFQSOd9w3Pg80M8=`。`scripts/verify-app.sh` 的断言同步更新：自动检查断言为 `true`，并新增“App 内公钥必须等于源 `Resources/Info.plist`”“不得为上游公钥”两条。
+  - **一次性升级中断（必须写进发布说明）**：上游 Sparkle 私钥不在本仓库手上，换用新公钥后，已经装了 `1.8.25-fork.1` ~ `1.8.25-fork.3` 的用户会拒绝一切用新私钥签名的更新——签名验签失败，Sparkle 不会提示、也不会安装。**`1.8.25-fork.4` 必须手动下载安装一次**；从 fork.4 起自动更新才真正生效。
+  - **新私钥保存在登录钥匙串（account `ed25519`），必须离线备份**（`generate_keys -x <file>` 导出）。钥匙串丢失或被重置后无法再签名任何更新，只能再换一次公钥并再让全部用户手动安装一次。
+  - [x] ad-hoc 已成为显式的一等发布模式，而不是被绕过的门禁：新增 `scripts/release-signing-mode.sh`，`RELEASE_SIGNING_MODE` 默认 `developer-id`，`adhoc` 必须显式开启。`adhoc` 只豁免 Developer ID 授权/Team 断言、Apple 公证/staple/spctl、上游 Team ID 相等门禁，以及本仓库无法访问的生产服务与私有包标记；同时新增 ad-hoc 专属断言（签名必须存在、内部有效且确实为 ad-hoc，Developer ID 产物走 ad-hoc 路径会被拒绝）和 appcast 签名断言（签名形状合法、签名密钥公钥必须等于 App 内 `SUPublicEDKey`）。无法证明的项由 `release_signing_mode_report` 在发布时逐条打印。
+  - Gatekeeper 拦截仍然存在且已确定不修：没有 Apple Developer ID 证书，只能 ad-hoc 签名，首次打开需右键“打开”。这是既定策略，见 `AGENTS.md`「macOS 预览候选分支」一节。
+  - 仍未解决的上游假设：`scripts/publish-release.sh` 的公开验证会下载 `https://download.sayall.app/mac/releases/<tag>/` 并校验 Cloudflare 响应头与稳定版跳转，本 fork 没有该 CDN，因此非 dry-run 的 `prerelease` 会在公开资产比对阶段失败；`scripts/fast-release.sh` 与 `scripts/package-macos-release-in-actions.sh` 依赖上游私有的 `remotemic-notary-secrets`、`apple-signing-match` 和 `Apps/MobileWeb/.private/production.env`（后者的路径已被 `scripts/check-repository-boundaries.sh` 禁止存在），在本仓库无法运行。`.github/workflows/mac-release-package.yml` 的两个私有凭据仓库刻意保留上游路径，不伪造 fork 替代。
+  - 测试手册见 [`Testing/ForkSparkleIdentityAndAdHocRelease.md`](Testing/ForkSparkleIdentityAndAdHocRelease.md)。自动化用例 1–2 与代理用例 3–4 已通过；**用例 5（`fork.3 → fork.4` 一次性中断）和用例 6（`fork.4` 之后自动更新可用）尚未真机验收**——用例 6 还需要一个 `fork.4` 之后的版本才有条件执行。稳定功能回归项也未在真机完成。
   - Bundle ID 仍为上游的 `com.hd838a.RemoteMic`，本分支构建与上游安装包会互相覆盖。若要与上游共存需改 Bundle ID，代价是蓝牙、输入监控、辅助功能权限全部重新授权。
 
 - [x] 统一 SayAll 品牌、官网与当前上架战略

@@ -113,8 +113,12 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
         case userInitiated
     }
 
+    // Must name the same repository as SUFeedURL in Resources/Info.plist. While
+    // this pointed at upstream, a fork user's update check listed upstream's
+    // releases: the pre-release feed discovery resolved an upstream appcast that
+    // no fork build can install, so a fork release was never even offered.
     private static let releasesURL = URL(
-        string: "https://api.github.com/repos/HD838A/remote-mic-app/releases?per_page=30"
+        string: "https://api.github.com/repos/NotWizard/remote-mic-app/releases?per_page=30"
     )!
     private static let preReleaseFeedRefreshInterval: TimeInterval = 6 * 60 * 60
 

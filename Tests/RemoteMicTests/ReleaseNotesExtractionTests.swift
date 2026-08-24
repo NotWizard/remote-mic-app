@@ -1159,6 +1159,9 @@ struct ReleasePublishIdentityTests {
         defer { try? FileManager.default.removeItem(at: root) }
 
         try copyScript("publish-release.sh", into: scripts, patch: publishPatch)
+        // Sourced by publish-release.sh: the release signing mode has to resolve
+        // before any gate below it runs.
+        try copyScript("release-signing-mode.sh", into: scripts)
         try copyScript("compose-release-body.sh", into: scripts)
         try copyScript("extract-release-notes.sh", into: scripts)
         try Self.infoPlist(version: plistVersion).write(
@@ -1474,6 +1477,7 @@ struct ReleasePublishIdentityTests {
 
         try copyScript("notarize-release.sh", into: scripts, patch: patch)
         try copyScript("release-variant.sh", into: scripts)
+        try copyScript("release-signing-mode.sh", into: scripts)
         try copyScript("extract-release-notes.sh", into: scripts)
         for name in ["apple-silicon.plist", "intel.plist"] {
             try FileManager.default.copyItem(

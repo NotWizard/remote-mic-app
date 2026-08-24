@@ -3,7 +3,7 @@ set -euo pipefail
 umask 077
 
 ROOT="${0:A:h:h}"
-REPOSITORY="${GITHUB_REPOSITORY:-HD838A/remote-mic-app}"
+REPOSITORY="${GITHUB_REPOSITORY:-NotWizard/remote-mic-app}"
 WORKFLOW_FILE="mac-preview-candidate.yml"
 WORKFLOW_NAME="macOS Preview Candidate"
 GH_BIN="${GH_BIN:-gh}"

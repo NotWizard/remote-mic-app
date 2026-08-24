@@ -3,7 +3,8 @@ set -euo pipefail
 umask 077
 
 ROOT="${0:A:h:h}"
-EXPECTED_DEVELOPER_TEAM_ID="${EXPECTED_DEVELOPER_TEAM_ID:-L3QHLDRPAY}"
+source "$ROOT/scripts/release-signing-mode.sh"
+EXPECTED_DEVELOPER_TEAM_ID="${EXPECTED_DEVELOPER_TEAM_ID:-$RELEASE_MODE_DEFAULT_DEVELOPER_TEAM_ID}"
 VERSION="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$ROOT/Resources/Info.plist")"
 RELEASE_TAG="${RELEASE_TAG:-v$VERSION}"
 RELEASE_CREDENTIALS_REPO="${RELEASE_CREDENTIALS_REPO:?Set RELEASE_CREDENTIALS_REPO to the readonly credentials checkout}"
@@ -24,10 +25,8 @@ if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
   print -u2 "this credential bootstrap is restricted to GitHub Actions"
   exit 1
 fi
-if [[ "$EXPECTED_DEVELOPER_TEAM_ID" != "L3QHLDRPAY" ]]; then
-  print -u2 "refusing to release for an unexpected Apple Developer Team"
-  exit 1
-fi
+require_release_developer_team "$EXPECTED_DEVELOPER_TEAM_ID"
+release_signing_mode_report
 if [[ "$RELEASE_TAG" != "v$VERSION" ]]; then
   print -u2 "RELEASE_TAG must match Resources/Info.plist"
   exit 1

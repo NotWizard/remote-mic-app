@@ -49,7 +49,12 @@
 - 每个候选版本使用一次性的 `release/pre-vX.Y.Z` 分支，并从最新 `origin/main` 创建。
 - 候选分支只允许修改版本号、Build、中英文版本历史和必要的测试手册目标版本；Push 后由 GitHub Actions 自动校验来源、运行完整 Mac 测试并生成临时 CI App 包。
 - 精确候选 SHA 的 Apple Silicon 与 Intel 候选 Job 成功后，可提前创建候选分支到 `main` 的 Draft 回流 PR，让受保护 PR CI 与正式签名、公证并行；公开 Release 字节、provenance 和固定候选更新验证完成前，该 PR 必须保持 Draft，禁止 Ready 或合并。
-- 公开 Pre-release 仍必须使用 Developer ID 签名、公证、Sparkle 签名和公开资产复核；GitHub CI 的 ad-hoc App 不能当作公开安装包。
+- 公开 Pre-release 使用 ad-hoc 签名并且不公证：本 fork 没有付费 Apple Developer 账号，无法取得 Developer ID 证书，也无法提交公证。这是本仓库的既定策略，不是待修的缺陷。
+- 因此必须在发布说明中明确告知用户代价：首次打开必须右键点击图标并选择“打开”（或先执行 `xattr -dr com.apple.quarantine`），Gatekeeper 会拦截直接双击；系统不会为本 App 提供 Apple 公证背书；企业受管设备可能直接禁止运行。不得把 ad-hoc 包描述为“已签名”“已公证”或“Apple 认证”。
+- ad-hoc 发布必须显式开启：`RELEASE_SIGNING_MODE=adhoc`，默认值仍是 `developer-id`，不得让任何脚本在缺省情况下静默放宽。该模式只豁免三类检查——Developer ID 授权与 Team 断言、Apple 公证/staple/spctl、上游 Team ID 相等门禁（在本仓库还包括无法访问的生产服务与私有包标记）。
+- 其余能验证的一律不得省略：`codesign --verify --deep --strict` 通过、签名确实存在且内部有效且确实是 ad-hoc、拒绝把 Developer ID 产物走 ad-hoc 路径发布、DMG 保持拖拽安装、驱动包 payload 不含任何 `/Applications` 路径、版本号与 Build 在 plist、appcast 和发布说明中一致。ad-hoc 模式下无法证明的项必须在发布时由脚本明确打印，不得静默跳过。
+- Sparkle 签名仍然是硬性要求：本 fork 已拥有自己的 EdDSA 密钥，appcast 的签名必须能被 App 内 `SUPublicEDKey` 验证，签名密钥的公钥必须与 App 实际携带的公钥逐字相等。签名密钥与该公钥不匹配时必须拒绝发布——每个已安装用户都会静默拒绝这样的更新。
+- GitHub CI 产出的 ad-hoc App 仍然只用于验证打包结构，不能当作公开安装包：它没有经过完整发布流程的资产复核、appcast 签名和公开字节校验。
 - 候选 Tag、远端候选分支和发布资产必须指向同一提交；候选分支在正式晋升完成前不得删除或 force-push。
 - 正式版必须由用户明确指定具体版本。候选提交先合入 `main`，再晋升同一 Tag 和同一批资产，禁止从 `main` 重新构建正式包。
 - 完整流程与 Release Notes 规则见 [`RELEASING.md`](RELEASING.md)。

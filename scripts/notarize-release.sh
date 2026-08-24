@@ -4,6 +4,7 @@ umask 022
 
 ROOT="${0:A:h:h}"
 source "$ROOT/scripts/release-variant.sh"
+source "$ROOT/scripts/release-signing-mode.sh"
 OUTPUT_DIR="$RELEASE_OUTPUT_DIR"
 PLIST="$ROOT/Resources/Info.plist"
 DISPLAY_NAME="Remote Mic"
@@ -21,13 +22,18 @@ EN_RELEASE_NOTES="$OUTPUT_DIR/Remote-Mic-$VERSION$RELEASE_ASSET_SUFFIX.en.txt"
 PUBLISHED_ZH_NOTES_BASENAME="Remote-Mic-$VERSION.zh.txt"
 PUBLISHED_EN_NOTES_BASENAME="Remote-Mic-$VERSION.en.txt"
 ZIP_BASENAME="${UPDATE_ZIP:t}"
-CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:?Set CODE_SIGN_IDENTITY to a Developer ID Application identity}"
-INSTALLER_SIGNING_IDENTITY="${INSTALLER_SIGNING_IDENTITY:?Set INSTALLER_SIGNING_IDENTITY to a Developer ID Installer identity}"
+CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-$RELEASE_MODE_DEFAULT_SIGNING_IDENTITY}"
+INSTALLER_SIGNING_IDENTITY="${INSTALLER_SIGNING_IDENTITY:-$RELEASE_MODE_DEFAULT_SIGNING_IDENTITY}"
 GENERATE_SPARKLE_UPDATE="${GENERATE_SPARKLE_UPDATE:-1}"
 SPARKLE_PRIVATE_KEY_FILE="${SPARKLE_PRIVATE_KEY_FILE:-}"
+# Read tolerantly so a plist with no key reaches the descriptive refusal in
+# require_sparkle_signing_key_matches_app below, instead of aborting here with a
+# raw plutil error before any release gate has run. verify-app.sh asserts the
+# key is present in the built app independently.
+APP_SPARKLE_PUBLIC_ED_KEY="$(/usr/bin/plutil -extract SUPublicEDKey raw -o - "$PLIST" 2>/dev/null || true)"
 NOTARY_PROFILE="${NOTARY_PROFILE:-RemoteMic-notary}"
 NOTARY_KEYCHAIN="${NOTARY_KEYCHAIN:-}"
-EXPECTED_DEVELOPER_TEAM_ID="${EXPECTED_DEVELOPER_TEAM_ID:-L3QHLDRPAY}"
+EXPECTED_DEVELOPER_TEAM_ID="${EXPECTED_DEVELOPER_TEAM_ID:-$RELEASE_MODE_DEFAULT_DEVELOPER_TEAM_ID}"
 PARALLEL_PACKAGE_NOTARIZATION="${PARALLEL_PACKAGE_NOTARIZATION:-0}"
 RELEASE_STAGE_TIMEOUTS="${RELEASE_STAGE_TIMEOUTS:-0}"
 RELEASE_NOTARY_TIMEOUT_SECONDS="${RELEASE_NOTARY_TIMEOUT_SECONDS:-120}"
@@ -36,21 +42,27 @@ RELEASE_VERIFY_TIMEOUT_SECONDS="${RELEASE_VERIFY_TIMEOUT_SECONDS:-60}"
 RELEASE_STAGE_RUNNER="$ROOT/scripts/run-release-stage.sh"
 PRIVATE_PRODUCTION_ENV="$ROOT/Apps/MobileWeb/.private/production.env"
 CDN_DOWNLOAD_PREFIX="${RELEASE_DOWNLOAD_PREFIX:-https://download.sayall.app/mac/releases/$RELEASE_TAG/}"
-RELEASE_PAGE="${RELEASE_PAGE_URL:-https://github.com/HD838A/remote-mic-app/releases/tag/$RELEASE_TAG}"
+RELEASE_PAGE="${RELEASE_PAGE_URL:-https://github.com/NotWizard/remote-mic-app/releases/tag/$RELEASE_TAG}"
 DEFAULT_RELEASE_BUILD_SCRATCH_PATH="/private/tmp/remote-mic-swiftpm/$VERSION-$BUILD/$RELEASE_VARIANT-sayall-ai-macro-platform"
 DEFAULT_RELEASE_BUILD_CACHE_PATH="/private/tmp/remote-mic-swiftpm-cache/$VERSION-$BUILD/$RELEASE_VARIANT-sayall-ai-macro-platform"
 RELEASE_BUILD_SCRATCH_PATH="${REMOTE_MIC_BUILD_SCRATCH_PATH:-$DEFAULT_RELEASE_BUILD_SCRATCH_PATH}"
 RELEASE_BUILD_CACHE_PATH="${REMOTE_MIC_BUILD_CACHE_PATH:-$DEFAULT_RELEASE_BUILD_CACHE_PATH}"
 GENERATE_APPCAST="$RELEASE_BUILD_SCRATCH_PATH/artifacts/sparkle/Sparkle/bin/generate_appcast"
 SIGN_UPDATE="$RELEASE_BUILD_SCRATCH_PATH/artifacts/sparkle/Sparkle/bin/sign_update"
+GENERATE_KEYS="${SPARKLE_GENERATE_KEYS:-$RELEASE_BUILD_SCRATCH_PATH/artifacts/sparkle/Sparkle/bin/generate_keys}"
 
 if [[ "$#" -ne 0 ]]; then
   print -u2 "usage: CODE_SIGN_IDENTITY=... INSTALLER_SIGNING_IDENTITY=... SPARKLE_PRIVATE_KEY_FILE=... $0"
   exit 1
 fi
-if [[ "$EXPECTED_DEVELOPER_TEAM_ID" != "L3QHLDRPAY" ]]; then
-  print -u2 "refusing to release for an unexpected Apple Developer Team"
-  exit 1
+require_release_developer_team "$EXPECTED_DEVELOPER_TEAM_ID"
+# Printed before the build so the waiver is at the top of the run that produced
+# the artifacts, not buried after twenty minutes of output.
+release_signing_mode_report
+if [[ "$RELEASE_SIGNING_MODE" == "adhoc" ]]; then
+  # There is nothing to notarize, so there is nothing to run in parallel; the
+  # parallel branch exists only to overlap two notarytool submissions.
+  PARALLEL_PACKAGE_NOTARIZATION=0
 fi
 case "$PARALLEL_PACKAGE_NOTARIZATION" in
   0|1) ;;
@@ -93,33 +105,37 @@ if [[ "$GENERATE_SPARKLE_UPDATE" == "1" ]]; then
     fi
   done
 fi
-if [[ "$CODE_SIGN_IDENTITY" != "Developer ID Application: "* ]]; then
-  print -u2 "CODE_SIGN_IDENTITY must name a Developer ID Application identity"
-  exit 1
+require_release_signing_identity "$CODE_SIGN_IDENTITY" "$INSTALLER_SIGNING_IDENTITY"
+if [[ "$GENERATE_SPARKLE_UPDATE" == "1" ]]; then
+  # The key may live in a file or in the login keychain — the fork's own key is
+  # in the keychain, so an unreadable file is only fatal when it was named.
+  if [[ -n "$SPARKLE_PRIVATE_KEY_FILE" && ! -r "$SPARKLE_PRIVATE_KEY_FILE" ]]; then
+    print -u2 "SPARKLE_PRIVATE_KEY_FILE is not readable"
+    exit 1
+  fi
+  if [[ -z "$SPARKLE_PRIVATE_KEY_FILE" && ! -x "$GENERATE_KEYS" ]]; then
+    print -u2 "no Sparkle signing key is available"
+    print -u2 "  set SPARKLE_PRIVATE_KEY_FILE, or make generate_keys available so the Keychain key can be looked up"
+    exit 1
+  fi
 fi
-if [[ "$INSTALLER_SIGNING_IDENTITY" != "Developer ID Installer: "* ]]; then
-  print -u2 "INSTALLER_SIGNING_IDENTITY must name a Developer ID Installer identity"
-  exit 1
-fi
-if [[ "$GENERATE_SPARKLE_UPDATE" == "1" && ! -r "$SPARKLE_PRIVATE_KEY_FILE" ]]; then
-  print -u2 "SPARKLE_PRIVATE_KEY_FILE is not readable"
-  exit 1
-fi
-if [[ -z "${REMOTE_WEB_RELAY_URL:-}" && -r "$PRIVATE_PRODUCTION_ENV" ]]; then
-  REMOTE_WEB_RELAY_URL="$(/usr/bin/sed -n 's/^REMOTE_WEB_RELAY_URL=//p' \
-    "$PRIVATE_PRODUCTION_ENV" | /usr/bin/tail -n 1)"
-fi
-if [[ -z "${EARLY_ACCESS_SERVICE_URL:-}" && -r "$PRIVATE_PRODUCTION_ENV" ]]; then
-  EARLY_ACCESS_SERVICE_URL="$(/usr/bin/sed -n 's/^EARLY_ACCESS_SERVICE_URL=//p' \
-    "$PRIVATE_PRODUCTION_ENV" | /usr/bin/tail -n 1)"
-fi
-if [[ "${REMOTE_WEB_RELAY_URL:-}" != wss://?*/ws ]]; then
-  print -u2 "REMOTE_WEB_RELAY_URL must be a production wss:// URL ending in /ws"
-  exit 1
-fi
-if ! print -r -- "${EARLY_ACCESS_SERVICE_URL:-}" | rg -q '^https://[^/?#]+/?$'; then
-  print -u2 "EARLY_ACCESS_SERVICE_URL must be a production root HTTPS URL"
-  exit 1
+if [[ "$RELEASE_MODE_REQUIRE_PRIVATE_SERVICES" == "1" ]]; then
+  if [[ -z "${REMOTE_WEB_RELAY_URL:-}" && -r "$PRIVATE_PRODUCTION_ENV" ]]; then
+    REMOTE_WEB_RELAY_URL="$(/usr/bin/sed -n 's/^REMOTE_WEB_RELAY_URL=//p' \
+      "$PRIVATE_PRODUCTION_ENV" | /usr/bin/tail -n 1)"
+  fi
+  if [[ -z "${EARLY_ACCESS_SERVICE_URL:-}" && -r "$PRIVATE_PRODUCTION_ENV" ]]; then
+    EARLY_ACCESS_SERVICE_URL="$(/usr/bin/sed -n 's/^EARLY_ACCESS_SERVICE_URL=//p' \
+      "$PRIVATE_PRODUCTION_ENV" | /usr/bin/tail -n 1)"
+  fi
+  if [[ "${REMOTE_WEB_RELAY_URL:-}" != wss://?*/ws ]]; then
+    print -u2 "REMOTE_WEB_RELAY_URL must be a production wss:// URL ending in /ws"
+    exit 1
+  fi
+  if ! print -r -- "${EARLY_ACCESS_SERVICE_URL:-}" | rg -q '^https://[^/?#]+/?$'; then
+    print -u2 "EARLY_ACCESS_SERVICE_URL must be a production root HTTPS URL"
+    exit 1
+  fi
 fi
 for command in codesign ditto security xcrun; do
   command -v "$command" >/dev/null 2>&1 || {
@@ -132,13 +148,15 @@ if [[ -n "$NOTARY_KEYCHAIN" ]]; then
   test -f "$NOTARY_KEYCHAIN"
   NOTARY_KEYCHAIN_ARGS=(--keychain "$NOTARY_KEYCHAIN")
 fi
-if ! security find-identity -v -p codesigning | rg -Fq "\"$CODE_SIGN_IDENTITY\""; then
-  print -u2 "Developer ID Application identity is unavailable in the local keychain"
-  exit 1
-fi
-if ! security find-identity -v -p basic | rg -Fq "\"$INSTALLER_SIGNING_IDENTITY\""; then
-  print -u2 "Developer ID Installer identity is unavailable in the local keychain"
-  exit 1
+if [[ "$RELEASE_MODE_REQUIRE_DEVELOPER_ID_SIGNING" == "1" ]]; then
+  if ! security find-identity -v -p codesigning | rg -Fq "\"$CODE_SIGN_IDENTITY\""; then
+    print -u2 "Developer ID Application identity is unavailable in the local keychain"
+    exit 1
+  fi
+  if ! security find-identity -v -p basic | rg -Fq "\"$INSTALLER_SIGNING_IDENTITY\""; then
+    print -u2 "Developer ID Installer identity is unavailable in the local keychain"
+    exit 1
+  fi
 fi
 
 WORK_DIR="$(/usr/bin/mktemp -d /private/tmp/remotemic-notarize-release.XXXXXX)"
@@ -169,6 +187,10 @@ run_release_stage() {
 notarize() {
   local stage="$1"
   local artifact="$2"
+  if [[ "$RELEASE_MODE_REQUIRE_NOTARIZATION" != "1" ]]; then
+    print "NOTARIZATION SKIPPED (ad-hoc mode): stage=$stage artifact=${artifact:t}"
+    return 0
+  fi
   run_release_stage "$stage" "$RELEASE_NOTARY_TIMEOUT_SECONDS" \
     xcrun notarytool submit "$artifact" \
       --keychain-profile "$NOTARY_PROFILE" \
@@ -179,6 +201,10 @@ notarize() {
 staple_and_validate() {
   local stage_prefix="$1"
   local artifact="$2"
+  if [[ "$RELEASE_MODE_REQUIRE_NOTARIZATION" != "1" ]]; then
+    print "STAPLE SKIPPED (ad-hoc mode): stage=$stage_prefix artifact=${artifact:t}"
+    return 0
+  fi
   run_release_stage "$stage_prefix-staple" "$RELEASE_STAPLE_TIMEOUT_SECONDS" \
     xcrun stapler staple "$artifact"
   run_release_stage "$stage_prefix-staple-validate" "$RELEASE_STAPLE_TIMEOUT_SECONDS" \
@@ -260,11 +286,11 @@ extract_release_notes() {
 export CODE_SIGN_IDENTITY
 export INSTALLER_SIGNING_IDENTITY
 export EXPECTED_DEVELOPER_TEAM_ID
-export REQUIRE_DEVELOPER_ID_SIGNING=1
-export REQUIRE_WEB_REMOTE_CONFIGURATION=1
-export REQUIRE_EARLY_ACCESS_CONFIGURATION=1
-export REQUIRE_SAYALL_AI_PACKAGE=1
-export REQUIRE_SAYALL_MACRO_PLATFORM=1
+export REQUIRE_DEVELOPER_ID_SIGNING="$RELEASE_MODE_REQUIRE_DEVELOPER_ID_SIGNING"
+export REQUIRE_WEB_REMOTE_CONFIGURATION="$RELEASE_MODE_REQUIRE_PRIVATE_SERVICES"
+export REQUIRE_EARLY_ACCESS_CONFIGURATION="$RELEASE_MODE_REQUIRE_PRIVATE_SERVICES"
+export REQUIRE_SAYALL_AI_PACKAGE="$RELEASE_MODE_REQUIRE_PRIVATE_SERVICES"
+export REQUIRE_SAYALL_MACRO_PLATFORM="$RELEASE_MODE_REQUIRE_PRIVATE_SERVICES"
 export REMOTE_WEB_RELAY_URL
 export EARLY_ACCESS_SERVICE_URL
 export REQUIRE_NOTARIZATION=0
@@ -278,6 +304,12 @@ run_release_stage app-verify-pre-notary "$RELEASE_VERIFY_TIMEOUT_SECONDS" \
 if [[ "$GENERATE_SPARKLE_UPDATE" == "1" ]]; then
   test -x "$GENERATE_APPCAST"
   test -x "$SIGN_UPDATE"
+  # Checked before the first signature, because signing with the wrong key
+  # produces a release every already-installed copy refuses, and
+  # `sign_update --verify` cannot see it: it validates the signature against
+  # whatever key just produced it, so any key passes.
+  require_sparkle_signing_key_matches_app \
+    "$APP_SPARKLE_PUBLIC_ED_KEY" "$GENERATE_KEYS" "$SPARKLE_PRIVATE_KEY_FILE"
 fi
 
 run_release_stage app-notary-archive 60 \
@@ -285,7 +317,8 @@ run_release_stage app-notary-archive 60 \
 notarize app-notary "$APP_NOTARY_ZIP"
 staple_and_validate app "$APP"
 run_release_stage app-verify-notarized "$RELEASE_VERIFY_TIMEOUT_SECONDS" \
-  env REQUIRE_NOTARIZATION=1 "$ROOT/scripts/verify-app.sh" "$APP"
+  env REQUIRE_NOTARIZATION="$RELEASE_MODE_REQUIRE_NOTARIZATION" \
+  "$ROOT/scripts/verify-app.sh" "$APP"
 
 run_release_stage driver-build 180 "$ROOT/scripts/build-doubao-driver.sh"
 run_release_stage driver-package-build 180 "$ROOT/scripts/build-doubao-driver-pkg.sh"
@@ -327,12 +360,12 @@ fi
 
 staple_and_validate installer-pkg "$INSTALL_PACKAGE"
 run_release_stage installer-pkg-verify "$RELEASE_VERIFY_TIMEOUT_SECONDS" \
-  env REQUIRE_NOTARIZATION=1 \
+  env REQUIRE_NOTARIZATION="$RELEASE_MODE_REQUIRE_NOTARIZATION" \
   "$ROOT/scripts/verify-doubao-driver-pkg.sh" "$INSTALL_PACKAGE" install
 
 staple_and_validate uninstaller-pkg "$UNINSTALL_PACKAGE"
 run_release_stage uninstaller-pkg-verify "$RELEASE_VERIFY_TIMEOUT_SECONDS" \
-  env REQUIRE_NOTARIZATION=1 \
+  env REQUIRE_NOTARIZATION="$RELEASE_MODE_REQUIRE_NOTARIZATION" \
   "$ROOT/scripts/verify-doubao-driver-pkg.sh" "$UNINSTALL_PACKAGE" uninstall
 
 run_release_stage dmg-build 120 env BUILD_COMPONENTS=0 "$ROOT/scripts/build-dmg.sh"
@@ -343,7 +376,8 @@ staple_and_validate dmg "$DMG"
   shasum -a 256 "${DMG:t}" > "${DMG:t}.sha256"
 )
 run_release_stage dmg-verify "$RELEASE_VERIFY_TIMEOUT_SECONDS" \
-  env REQUIRE_NOTARIZATION=1 "$ROOT/scripts/verify-dmg.sh" "$DMG"
+  env REQUIRE_NOTARIZATION="$RELEASE_MODE_REQUIRE_NOTARIZATION" \
+  "$ROOT/scripts/verify-dmg.sh" "$DMG"
 
 if [[ "$GENERATE_SPARKLE_UPDATE" == "1" ]]; then
   case "$UPDATE_ZIP" in
@@ -364,8 +398,15 @@ if [[ "$GENERATE_SPARKLE_UPDATE" == "1" ]]; then
   extract_release_notes \
     "$ROOT/Resources/en.lproj/ReleaseHistory.md" \
     "$SPARKLE_ARCHIVES/$EN_NOTES_BASENAME"
+  # Empty when the key lives in the login Keychain, which is where this fork's
+  # key is. `--ed-key-file ""` is not the same as omitting the flag: Sparkle
+  # would try to read a file named "" and fail.
+  SPARKLE_KEY_ARGS=()
+  if [[ -n "$SPARKLE_PRIVATE_KEY_FILE" ]]; then
+    SPARKLE_KEY_ARGS=(--ed-key-file "$SPARKLE_PRIVATE_KEY_FILE")
+  fi
   "$GENERATE_APPCAST" \
-    --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" \
+    "${SPARKLE_KEY_ARGS[@]}" \
     --download-url-prefix "$CDN_DOWNLOAD_PREFIX" \
     --release-notes-url-prefix "$CDN_DOWNLOAD_PREFIX" \
     --link "$RELEASE_PAGE" \
@@ -387,17 +428,21 @@ if [[ "$GENERATE_SPARKLE_UPDATE" == "1" ]]; then
     "$SPARKLE_ARCHIVES/$EN_NOTES_BASENAME" "$EN_RELEASE_NOTES"
 
   ENCLOSURE_SIGNATURE="$(sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p' "$APPCAST" | head -n 1)"
-  test -n "$ENCLOSURE_SIGNATURE"
+  require_signed_appcast "$APPCAST" "${APPCAST:t}"
   rg -Fq "url=\"$CDN_DOWNLOAD_PREFIX$ZIP_BASENAME\"" "$APPCAST"
   rg -Fq "$CDN_DOWNLOAD_PREFIX$PUBLISHED_ZH_NOTES_BASENAME" "$APPCAST"
   rg -Fq "$CDN_DOWNLOAD_PREFIX$PUBLISHED_EN_NOTES_BASENAME" "$APPCAST"
   rg -Fq "<sparkle:version>$BUILD</sparkle:version>" "$APPCAST"
-  "$SIGN_UPDATE" --verify --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" "$UPDATE_ZIP" "$ENCLOSURE_SIGNATURE"
-  "$SIGN_UPDATE" --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" "$APPCAST"
-  "$SIGN_UPDATE" --verify --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" "$APPCAST"
+  "$SIGN_UPDATE" --verify "${SPARKLE_KEY_ARGS[@]}" "$UPDATE_ZIP" "$ENCLOSURE_SIGNATURE"
+  "$SIGN_UPDATE" "${SPARKLE_KEY_ARGS[@]}" "$APPCAST"
+  "$SIGN_UPDATE" --verify "${SPARKLE_KEY_ARGS[@]}" "$APPCAST"
 fi
 
-print "NOTARIZED RELEASE READY"
+if [[ "$RELEASE_MODE_REQUIRE_NOTARIZATION" == "1" ]]; then
+  print "NOTARIZED RELEASE READY"
+else
+  print "AD-HOC RELEASE READY (NOT NOTARIZED)"
+fi
 print "RELEASE VARIANT: $RELEASE_VARIANT"
 print "RELEASE TAG: $RELEASE_TAG"
 print "DMG: $DMG"
@@ -412,3 +457,4 @@ if [[ "$GENERATE_SPARKLE_UPDATE" == "1" ]]; then
 else
   print "SPARKLE UPDATE: skipped for private test package"
 fi
+release_signing_mode_report

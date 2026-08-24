@@ -3,11 +3,11 @@ set -euo pipefail
 umask 077
 
 ROOT="${0:A:h:h}"
-REPOSITORY="HD838A/remote-mic-app"
+REPOSITORY="NotWizard/remote-mic-app"
 RELEASE_TAG="${1:-}"
 EVENT_ACTOR="${2:-}"
 RECORD_PREVIEW="${3:-0}"
-ALLOWED_ACTORS="${STABLE_RELEASE_ACTORS:-HD838A}"
+ALLOWED_ACTORS="${STABLE_RELEASE_ACTORS:-NotWizard}"
 
 # Same tag shape as scripts/publish-release.sh: `vX.Y.Z` with an optional
 # `-fork.N` ordinal, because publish-release.sh dispatches release-guard.yml with

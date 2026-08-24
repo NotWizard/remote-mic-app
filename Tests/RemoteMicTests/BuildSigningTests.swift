@@ -55,7 +55,24 @@ struct BuildSigningTests {
         #expect(buildSource.contains("REQUIRE_WEB_REMOTE_CONFIGURATION"))
         #expect(buildSource.contains("A production wss:// relay URL ending in /ws is required"))
         #expect(notarizeSource.contains("Apps/MobileWeb/.private/production.env"))
-        #expect(notarizeSource.contains("export REQUIRE_WEB_REMOTE_CONFIGURATION=1"))
+        // Driven by the signing mode now instead of a hardcoded 1. A production
+        // Developer ID release still requires it, which is what the second half
+        // asserts; only the ad-hoc mode, which cannot read the private repository
+        // these URLs live in, is exempt.
+        #expect(notarizeSource.contains(
+            "export REQUIRE_WEB_REMOTE_CONFIGURATION=\"$RELEASE_MODE_REQUIRE_PRIVATE_SERVICES\""
+        ))
+        let signingModeSource = try String(
+            contentsOf: root.appendingPathComponent("scripts/release-signing-mode.sh"),
+            encoding: .utf8
+        )
+        let developerIdBranch = try #require(
+            signingModeSource.components(separatedBy: "  developer-id)").last?
+                .components(separatedBy: "  adhoc)").first
+        )
+        #expect(developerIdBranch.contains("RELEASE_MODE_REQUIRE_PRIVATE_SERVICES=1"))
+        #expect(developerIdBranch.contains("RELEASE_MODE_REQUIRE_DEVELOPER_ID_SIGNING=1"))
+        #expect(developerIdBranch.contains("RELEASE_MODE_REQUIRE_NOTARIZATION=1"))
         #expect(notarizeSource.contains("export REMOTE_WEB_RELAY_URL"))
         #expect(verifySource.contains("Developer ID app is missing a production Web Remote relay URL"))
     }
@@ -84,8 +101,24 @@ struct BuildSigningTests {
         #expect(buildSource.contains("SayAllAIIncluded"))
         #expect(buildSource.contains("DEFAULT_SCRATCH_PATH=\"/private/tmp/remote-mic-swiftpm/"))
         #expect(!buildSource.contains("DEFAULT_SCRATCH_PATH=\"$ROOT/.build-app-sayall-ai\""))
-        #expect(notarizeSource.contains("export REQUIRE_SAYALL_AI_PACKAGE=1"))
-        #expect(notarizeSource.contains("export REQUIRE_SAYALL_MACRO_PLATFORM=1"))
+        #expect(notarizeSource.contains(
+            "export REQUIRE_SAYALL_AI_PACKAGE=\"$RELEASE_MODE_REQUIRE_PRIVATE_SERVICES\""
+        ))
+        #expect(notarizeSource.contains(
+            "export REQUIRE_SAYALL_MACRO_PLATFORM=\"$RELEASE_MODE_REQUIRE_PRIVATE_SERVICES\""
+        ))
+        // Same substitution as the Web Remote requirement: a production Developer
+        // ID release still demands both packages, because the developer-id branch
+        // sets the flag they are derived from to 1.
+        let signingModeSource = try String(
+            contentsOf: root.appendingPathComponent("scripts/release-signing-mode.sh"),
+            encoding: .utf8
+        )
+        let developerIdBranch = try #require(
+            signingModeSource.components(separatedBy: "  developer-id)").last?
+                .components(separatedBy: "  adhoc)").first
+        )
+        #expect(developerIdBranch.contains("RELEASE_MODE_REQUIRE_PRIVATE_SERVICES=1"))
         #expect(verifySource.contains("App is missing the required SayAllAI package marker"))
         #expect(verifySource.contains("CFBundleDevelopmentRegion"))
     }
@@ -831,5 +864,228 @@ struct BuildSigningTests {
         #expect(!workflowSource.contains("SPARKLE_PRIVATE_KEY_BASE64"))
         #expect(!workflowSource.contains("pull_request:"))
         #expect(!workflowSource.contains("push:"))
+    }
+
+    @Test func theShippedSparkleIdentityIsThisForksOwnAndChecksRunAutomatically() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let forkPublicKey = "+EyNzAtTgwbJ4/04/ujn/JrpA0NKLFQSOd9w3Pg80M8="
+        let upstreamPublicKey = "8dWQovCnGPucjMcQuCHfrAv4PtjuDjJSbHNmItqYiyc="
+        let plist = try #require(
+            NSDictionary(
+                contentsOf: root.appendingPathComponent("Resources/Info.plist")
+            ) as? [String: Any]
+        )
+
+        // The private half of upstream's key is not available here, so shipping it
+        // would mean nothing this fork signs could ever install.
+        #expect(plist["SUPublicEDKey"] as? String == forkPublicKey)
+        #expect(plist["SUPublicEDKey"] as? String != upstreamPublicKey)
+        // Users are meant to receive fork releases without going looking for them.
+        #expect(plist["SUEnableAutomaticChecks"] as? Bool == true)
+        // Checking automatically is not the same as installing silently.
+        #expect(plist["SUAutomaticallyUpdate"] as? Bool == false)
+        #expect(plist["SUAllowsAutomaticUpdates"] as? Bool == false)
+        #expect(
+            plist["SUFeedURL"] as? String
+                == "https://github.com/NotWizard/remote-mic-app/releases/latest/download/appcast.xml"
+        )
+
+        let verifySource = try String(
+            contentsOf: root.appendingPathComponent("scripts/verify-app.sh"),
+            encoding: .utf8
+        )
+        #expect(verifySource.contains(
+            "test \"$(plutil -extract SUEnableAutomaticChecks raw -o - \"$PLIST\")\" = \"true\""
+        ))
+        #expect(!verifySource.contains(
+            "test \"$(plutil -extract SUEnableAutomaticChecks raw -o - \"$PLIST\")\" = \"false\""
+        ))
+        // `test -n` alone would have passed an app still carrying upstream's key.
+        #expect(verifySource.contains(
+            "app ships a Sparkle public key that is not the one in Resources/Info.plist"
+        ))
+        #expect(verifySource.contains(
+            "app ships upstream's Sparkle public key, whose private half is unavailable here"
+        ))
+
+        let variantSource = try String(
+            contentsOf: root.appendingPathComponent("scripts/release-variant.sh"),
+            encoding: .utf8
+        )
+        #expect(variantSource.contains("https://github.com/NotWizard/remote-mic-app"))
+    }
+
+    @Test func everyForkFacingUpdatePathNamesThisForkRatherThanUpstream() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let appSource = try String(
+            contentsOf: root.appendingPathComponent("Sources/RemoteMic/RemoteMicApp.swift"),
+            encoding: .utf8
+        )
+        let linksSource = try String(
+            contentsOf: root.appendingPathComponent("Sources/RemoteMic/AppLinks.swift"),
+            encoding: .utf8
+        )
+
+        // While this named upstream, a fork user's update check listed upstream's
+        // releases and resolved an upstream appcast no fork build can install, so
+        // a fork release was never offered at all.
+        #expect(appSource.contains(
+            "https://api.github.com/repos/NotWizard/remote-mic-app/releases?per_page=30"
+        ))
+        #expect(linksSource.contains("https://github.com/NotWizard/remote-mic-app"))
+
+        let sourceDirectory = root.appendingPathComponent("Sources")
+        let enumerator = try #require(
+            FileManager.default.enumerator(atPath: sourceDirectory.path)
+        )
+        var offendingFiles: [String] = []
+        while let relativePath = enumerator.nextObject() as? String {
+            guard relativePath.hasSuffix(".swift") else { continue }
+            let contents = try String(
+                contentsOf: sourceDirectory.appendingPathComponent(relativePath),
+                encoding: .utf8
+            )
+            if contents.contains("HD838A/remote-mic-app") {
+                offendingFiles.append(relativePath)
+            }
+        }
+        #expect(offendingFiles.isEmpty, "still names upstream: \(offendingFiles)")
+    }
+
+    @Test func adHocReleaseModeIsOptInAndWaivesOnlyWhatItCannotProve() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let modeSource = try String(
+            contentsOf: root.appendingPathComponent("scripts/release-signing-mode.sh"),
+            encoding: .utf8
+        )
+        let verifySource = try String(
+            contentsOf: root.appendingPathComponent("scripts/verify-app.sh"),
+            encoding: .utf8
+        )
+        let dmgVerifierSource = try String(
+            contentsOf: root.appendingPathComponent("scripts/verify-dmg.sh"),
+            encoding: .utf8
+        )
+        let publishSource = try String(
+            contentsOf: root.appendingPathComponent("scripts/publish-release.sh"),
+            encoding: .utf8
+        )
+        let notarizeSource = try String(
+            contentsOf: root.appendingPathComponent("scripts/notarize-release.sh"),
+            encoding: .utf8
+        )
+        let fastReleaseSource = try String(
+            contentsOf: root.appendingPathComponent("scripts/fast-release.sh"),
+            encoding: .utf8
+        )
+        let actionsBootstrapSource = try String(
+            contentsOf: root.appendingPathComponent(
+                "scripts/package-macos-release-in-actions.sh"
+            ),
+            encoding: .utf8
+        )
+
+        // Opt-in: nothing loosens unless the mode is set on purpose.
+        #expect(modeSource.contains(
+            "RELEASE_SIGNING_MODE=\"${RELEASE_SIGNING_MODE:-developer-id}\""
+        ))
+        #expect(modeSource.contains("RELEASE_SIGNING_MODE must be developer-id or adhoc"))
+
+        // Ad-hoc adds assertions rather than only removing them, including the one
+        // that stops it becoming a way to publish a Developer ID build with the
+        // Apple-side checks turned off.
+        #expect(modeSource.contains("ad-hoc release mode requires a valid code signature"))
+        #expect(modeSource.contains("ad-hoc release mode requires an ad-hoc signature"))
+        #expect(modeSource.contains("ad-hoc release mode refuses a Developer ID signature"))
+        #expect(modeSource.contains("refusing to sign an appcast with a key the app does not trust"))
+        #expect(modeSource.contains("appcast carries no Sparkle enclosure signature"))
+        #expect(modeSource.contains("NOT PROVEN: Apple notarization"))
+        #expect(modeSource.contains("USERS MUST right-click -> Open once"))
+
+        #expect(verifySource.contains("require_adhoc_code_signature \"$APP\" \"app bundle\""))
+        #expect(dmgVerifierSource.contains("require_adhoc_code_signature \"$STAGED_APP\""))
+        #expect(publishSource.contains("require_signed_appcast \"$APPCAST\""))
+        #expect(publishSource.contains("require_signed_appcast \"$INTEL_APPCAST\""))
+        #expect(notarizeSource.contains("require_sparkle_signing_key_matches_app"))
+
+        // The Developer ID checks that ad-hoc waives must still exist for the mode
+        // that can prove them; waiving is not deleting.
+        #expect(verifySource.contains("rg -q '^Authority=Developer ID Application:'"))
+        #expect(verifySource.contains("xcrun stapler validate \"$APP\""))
+        // The drag-install and driver-payload rules were never mode-dependent and
+        // must stay unconditional.
+        #expect(dmgVerifierSource.contains("test \"$(readlink \"$APPLICATIONS_LINK\")\" = \"/Applications\""))
+        #expect(verifySource.contains("codesign --verify --deep --strict \"$APP\""))
+
+        // The four hardcoded upstream-team refusals are replaced by one shared gate,
+        // not dropped.
+        for source in [publishSource, notarizeSource, fastReleaseSource, actionsBootstrapSource] {
+            #expect(source.contains("require_release_developer_team"))
+            #expect(source.contains("release_signing_mode_report"))
+            #expect(!source.contains("!= \"L3QHLDRPAY\""))
+            #expect(!source.contains("EXPECTED_TEAM_ID=\"L3QHLDRPAY\""))
+        }
+        #expect(modeSource.contains("RELEASE_UPSTREAM_DEVELOPER_TEAM_ID=\"L3QHLDRPAY\""))
+        #expect(!publishSource.contains(
+            "REQUIRE_DEVELOPER_ID_SIGNING=1 REQUIRE_NOTARIZATION=1"
+        ))
+        #expect(publishSource.contains(
+            "export REQUIRE_DEVELOPER_ID_SIGNING=\"$RELEASE_MODE_REQUIRE_DEVELOPER_ID_SIGNING\""
+        ))
+        #expect(!notarizeSource.contains("REQUIRE_NOTARIZATION=1"))
+    }
+
+    @Test func adHocReleaseModeHasExecutableNegativeControlCoverage() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let regressionScript = root.appendingPathComponent(
+            "scripts/test-adhoc-release-mode.sh"
+        )
+        let regressionSource = try String(contentsOf: regressionScript, encoding: .utf8)
+
+        #expect(regressionSource.contains("ADHOC RELEASE MODE TEST PASS"))
+        #expect(regressionSource.contains("expect_refusal \"an unsigned bundle\""))
+        #expect(regressionSource.contains(
+            "expect_refusal \"a signed bundle whose executable was modified after signing\""
+        ))
+        #expect(regressionSource.contains(
+            "expect_refusal \"a signing key that is not the key the app ships\""
+        ))
+        #expect(regressionSource.contains(
+            "expect_refusal \"adhoc that still names a team (mode mismatch)\""
+        ))
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = [regressionScript.path]
+        let standardOutput = Pipe()
+        let standardError = Pipe()
+        process.standardOutput = standardOutput
+        process.standardError = standardError
+        try process.run()
+        process.waitUntilExit()
+        let output = String(
+            data: standardOutput.fileHandleForReading.readDataToEndOfFile(),
+            encoding: .utf8
+        ) ?? ""
+        let error = String(
+            data: standardError.fileHandleForReading.readDataToEndOfFile(),
+            encoding: .utf8
+        ) ?? ""
+        #expect(
+            process.terminationStatus == 0,
+            "Ad-hoc release mode regression failed. stdout: \(output) stderr: \(error)"
+        )
     }
 }

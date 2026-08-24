@@ -4,8 +4,9 @@ umask 077
 
 ROOT="${0:A:h:h}"
 PLIST="$ROOT/Resources/Info.plist"
-REPOSITORY="HD838A/remote-mic-app"
-EXPECTED_TEAM_ID="L3QHLDRPAY"
+source "$ROOT/scripts/release-signing-mode.sh"
+REPOSITORY="NotWizard/remote-mic-app"
+EXPECTED_TEAM_ID="${EXPECTED_DEVELOPER_TEAM_ID:-$RELEASE_MODE_DEFAULT_DEVELOPER_TEAM_ID}"
 VERSION="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$PLIST")"
 BUILD="$(/usr/bin/plutil -extract CFBundleVersion raw -o - "$PLIST")"
 RELEASE_TAG="v$VERSION"
@@ -32,6 +33,8 @@ if [[ "${ALLOW_ISOLATED_RELEASE_KEYCHAIN:-0}" != "1" ]]; then
   print -u2 "Set ALLOW_ISOLATED_RELEASE_KEYCHAIN=1 to authorize the temporary release Keychain"
   exit 1
 fi
+require_release_developer_team "$EXPECTED_TEAM_ID"
+release_signing_mode_report
 # Same version shape as the tag rule in scripts/publish-release.sh: `X.Y.Z` with
 # an optional `-fork.N` ordinal. The build stays a plain integer, which is what
 # Sparkle compares and what verify-preview-branch.sh requires to increase.

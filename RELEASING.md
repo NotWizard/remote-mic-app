@@ -46,6 +46,8 @@ GitHub 自动生成的 CI App 只用于验证打包结构，不是已签名、�
 
 候选 CI 和正式打包允许并行的是已经相互隔离的工作；Developer ID 签名、公证、staple、Gatekeeper、公开字节和 Sparkle 更新验证均不得省略。下一次预览发布应记录候选 CI、PR CI、Environment 等待、双架构构建、公证、公开验证各阶段耗时，用真实数据确认优化效果。
 
+上一段描述的是 `RELEASE_SIGNING_MODE=developer-id`（默认模式）。本 fork 没有付费 Apple Developer 账号，取不到 Developer ID 证书，也无法提交公证，因此 fork 发布使用必须显式开启的 `RELEASE_SIGNING_MODE=adhoc`。该模式只豁免 Developer ID 授权与 Team 断言、Apple 公证/staple/spctl、上游 Team ID 相等门禁（在本仓库还包括无法访问的生产服务与私有包标记），其余能验证的一项都不省略；Sparkle 签名仍然是硬性要求，且签名密钥的公钥必须与 App 内 `SUPublicEDKey` 逐字相等。ad-hoc 模式无法证明的项由脚本在发布时逐条打印。完整策略与用户代价见 [`AGENTS.md`](AGENTS.md) 的「macOS 预览候选分支」一节。
+
 ## 正式晋升
 
 - 只有用户明确指定具体版本并要求正式发布时才允许晋升。

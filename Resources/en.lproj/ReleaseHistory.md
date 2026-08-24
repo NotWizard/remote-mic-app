@@ -8,6 +8,10 @@
 - **Why this changed**: until now a device stayed trusted forever. A phone you lent out, sold, or lost could still connect to your Mac and press keys.
 - **What the new rule is**: trust for each phone or watch lasts 30 days. Connecting after it expires brings back the confirmation prompt with a two-digit code, just like the first time.
 - **What you should do**: there is nothing to do in advance — confirm once more when the prompt returns. To revoke a device immediately, clear trusted devices in settings as before, without waiting for it to expire.
+- **This version has to be downloaded and installed by hand once. Updates are automatic from here on.**
+- **Why this changed**: until now this fork had no update signature of its own and reused the original project's. It now signs its own updates, and the copy already installed on your Mac only accepts the old signature.
+- **What the new rule is**: a Mac running 1.8.25-fork.1, fork.2, or fork.3 will not receive this version — the installed copy refuses it outright, with no prompt and no install. From this version onward the app checks for new versions on its own and offers them to you.
+- **What you should do**: download this one from the releases page and install it over your current copy. After that there is nothing left to do by hand.
 - Automated tests for every change in this release pass. **Verification on real hardware is not complete**: overnight reconnection, recovery from an interrupted recording, and the interface text sizes have not been confirmed on a real device or in a real window.
 
 ## ✨ Improvements

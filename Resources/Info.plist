@@ -41,7 +41,7 @@
 	<key>SUFeedURL</key>
 	<string>https://github.com/NotWizard/remote-mic-app/releases/latest/download/appcast.xml</string>
 	<key>SUEnableAutomaticChecks</key>
-	<false/>
+	<true/>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
 	<key>SUAutomaticallyUpdate</key>
@@ -49,6 +49,6 @@
 	<key>SUAllowsAutomaticUpdates</key>
 	<false/>
 	<key>SUPublicEDKey</key>
-	<string>8dWQovCnGPucjMcQuCHfrAv4PtjuDjJSbHNmItqYiyc=</string>
+	<string>+EyNzAtTgwbJ4/04/ujn/JrpA0NKLFQSOd9w3Pg80M8=</string>
 </dict>
 </plist>

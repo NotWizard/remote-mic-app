@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="${0:A:h:h}"
 source "$ROOT/scripts/release-variant.sh"
+source "$ROOT/scripts/release-signing-mode.sh"
 if [[ "$#" -gt 1 ]]; then
   print -u2 "usage: $0 [APP]"
   exit 1
@@ -136,14 +137,36 @@ test "$(plutil -extract CFBundleDisplayName raw -o - "$PLIST")" = "SayAll"
 test "$(plutil -extract CFBundleIconFile raw -o - "$PLIST")" = "AppIcon"
 test -n "$(plutil -extract NSBluetoothAlwaysUsageDescription raw -o - "$PLIST")"
 test "$(plutil -extract SUFeedURL raw -o - "$PLIST")" = "$RELEASE_FEED_URL"
-# This fork disables automatic checks on purpose. Together with the fork-owned feed
-# URL above it keeps Sparkle from replacing a fork build with upstream's signed
-# release. Manual "Check for Updates…" still works.
-test "$(plutil -extract SUEnableAutomaticChecks raw -o - "$PLIST")" = "false"
+# Automatic checks are on. They were switched off while SUFeedURL still named
+# upstream, because a scheduled check would then have offered upstream's signed
+# release and silently replaced this fork. Both halves of that risk are gone:
+# the feed URL above and the releases API in Sources/RemoteMic/RemoteMicApp.swift
+# name this fork, and the key below is this fork's own, so nothing upstream signs
+# can install here. Leaving checks off now would instead mean fork users never
+# hear about a fork release.
+test "$(plutil -extract SUEnableAutomaticChecks raw -o - "$PLIST")" = "true"
 test "$(plutil -extract SUScheduledCheckInterval raw -o - "$PLIST")" = "86400"
 test "$(plutil -extract SUAutomaticallyUpdate raw -o - "$PLIST")" = "false"
 test "$(plutil -extract SUAllowsAutomaticUpdates raw -o - "$PLIST")" = "false"
-test -n "$(plutil -extract SUPublicEDKey raw -o - "$PLIST")"
+# `test -n` used to be the whole check here, which would have passed an app
+# still carrying upstream's public key — the one failure mode that breaks
+# auto-update for every installed user, because nothing this fork signs
+# verifies against it.
+APP_SPARKLE_PUBLIC_ED_KEY="$(plutil -extract SUPublicEDKey raw -o - "$PLIST")"
+SOURCE_SPARKLE_PUBLIC_ED_KEY="$(plutil -extract SUPublicEDKey raw -o - \
+  "$ROOT/Resources/Info.plist")"
+test -n "$APP_SPARKLE_PUBLIC_ED_KEY"
+if [[ "$APP_SPARKLE_PUBLIC_ED_KEY" != "$SOURCE_SPARKLE_PUBLIC_ED_KEY" ]]; then
+  print -u2 "app ships a Sparkle public key that is not the one in Resources/Info.plist"
+  print -u2 "  app: $APP_SPARKLE_PUBLIC_ED_KEY"
+  print -u2 "  source: $SOURCE_SPARKLE_PUBLIC_ED_KEY"
+  exit 1
+fi
+if [[ "$APP_SPARKLE_PUBLIC_ED_KEY" == "$RELEASE_UPSTREAM_SPARKLE_PUBLIC_ED_KEY" ]]; then
+  print -u2 "app ships upstream's Sparkle public key, whose private half is unavailable here"
+  print -u2 "  no update this fork signs would ever be accepted by this build"
+  exit 1
+fi
 SAYALL_AI_INCLUDED="$(plutil -extract SayAllAIIncluded raw -o - "$PLIST" 2>/dev/null || true)"
 if [[ "$SAYALL_AI_INCLUDED" == "true" ]]; then
   SAYALL_AI_RESOURCE_BUNDLE="$APP/Contents/Resources/SayAllAI_SayAllAI.bundle"
@@ -211,6 +234,21 @@ if [[ "$REQUIRE_DEVELOPER_ID_SIGNING" == "1" ]]; then
       rg -q '^CodeDirectory .*flags=.*runtime'
   done
 fi
+if [[ "$RELEASE_SIGNING_MODE" == "adhoc" ]]; then
+  # Replaces the Developer ID authority block above rather than removing it.
+  # The signature still has to exist, still has to seal the bundle, and now also
+  # has to actually be ad-hoc — an unsigned bundle, a broken seal and a
+  # Developer ID bundle each fail here with their own message.
+  require_adhoc_code_signature "$APP" "app bundle"
+  for signed_component in \
+    "$SPARKLE_FRAMEWORK/Versions/B/XPCServices/Installer.xpc" \
+    "$SPARKLE_FRAMEWORK/Versions/B/XPCServices/Downloader.xpc" \
+    "$SPARKLE_FRAMEWORK/Versions/B/Autoupdate" \
+    "$SPARKLE_FRAMEWORK/Versions/B/Updater.app" \
+    "$SPARKLE_FRAMEWORK"; do
+    require_adhoc_code_signature "$signed_component" "${signed_component#$APP/}"
+  done
+fi
 file "$BINARY" | rg -q 'Mach-O 64-bit executable'
 ARCHS="$(lipo -archs "$BINARY")"
 test "$ARCHS" = "$RELEASE_ARCH"
@@ -252,3 +290,4 @@ fi
 
 print "APP VERIFY PASS: $APP"
 print "RELEASE VARIANT: $RELEASE_VARIANT"
+release_signing_mode_report

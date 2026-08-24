@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="${0:A:h:h}"
 source "$ROOT/scripts/release-variant.sh"
+source "$ROOT/scripts/release-signing-mode.sh"
 OUTPUT_DIR="$RELEASE_OUTPUT_DIR"
 DISPLAY_NAME="Remote Mic"
 VERSION="$(plutil -extract CFBundleShortVersionString raw -o - "$ROOT/Resources/Info.plist")"
@@ -83,10 +84,19 @@ test "$(plutil -extract CFBundleIdentifier raw -o - "$STAGED_APP/Contents/Info.p
 test "$(plutil -extract CFBundleShortVersionString raw -o - "$STAGED_APP/Contents/Info.plist")" = "$VERSION"
 test "$(plutil -extract CFBundleVersion raw -o - "$STAGED_APP/Contents/Info.plist")" = "$BUILD"
 test "$(plutil -extract SUFeedURL raw -o - "$STAGED_APP/Contents/Info.plist")" = "$RELEASE_FEED_URL"
+test "$(plutil -extract SUPublicEDKey raw -o - "$STAGED_APP/Contents/Info.plist")" = \
+  "$(plutil -extract SUPublicEDKey raw -o - "$ROOT/Resources/Info.plist")"
+if [[ "$RELEASE_SIGNING_MODE" == "adhoc" ]]; then
+  # The DMG itself is unsigned in this mode, so the staged app is the only
+  # signature there is to check — and the drag-install shape above, which is
+  # what the user actually installs, was already unconditional.
+  require_adhoc_code_signature "$STAGED_APP" "staged app in ${DMG:t}"
+fi
 
 print "DMG VERIFY PASS: $DMG"
 print "VERSION: $VERSION ($BUILD)"
 print "RELEASE VARIANT: $RELEASE_VARIANT"
+release_signing_mode_report
 if [[ "$REQUIRE_NOTARIZATION" == "1" ]]; then
   print "NOTARIZATION: stapled and accepted by Gatekeeper"
 fi

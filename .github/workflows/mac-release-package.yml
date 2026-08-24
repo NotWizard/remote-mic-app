@@ -91,6 +91,12 @@ jobs:
           ssh-key: ${{ secrets.SAYALL_MAC_REMOTE_DEPLOY_KEY }}
           persist-credentials: false
 
+      # The two repositories below hold upstream's Apple notarization credentials
+      # and Match signing identities. Both are upstream-owned and this fork has
+      # no access to either, so they are deliberately left naming upstream rather
+      # than repointed to a fork path that does not exist. This workflow
+      # therefore cannot run in the fork; a fork release is produced with
+      # RELEASE_SIGNING_MODE=adhoc instead.
       - name: Check out readonly release credentials
         uses: actions/checkout@v5
         with:
