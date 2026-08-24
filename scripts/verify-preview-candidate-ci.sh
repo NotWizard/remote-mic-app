@@ -33,8 +33,10 @@ if [[ -z "$BRANCH" ]]; then
     exit 1
   }
 fi
-if [[ ! "$BRANCH" =~ '^release/pre-v[0-9]+\.[0-9]+\.[0-9]+$' ]]; then
-  print -u2 "candidate CI verification requires release/pre-vX.Y.Z"
+# Same version shape as scripts/publish-release.sh and
+# scripts/verify-preview-branch.sh: `X.Y.Z` with an optional `-fork.N` ordinal.
+if [[ ! "$BRANCH" =~ '^release/pre-v[0-9]+\.[0-9]+\.[0-9]+(-fork\.[0-9]+)?$' ]]; then
+  print -u2 "candidate CI verification requires release/pre-vX.Y.Z or release/pre-vX.Y.Z-fork.N"
   exit 1
 fi
 

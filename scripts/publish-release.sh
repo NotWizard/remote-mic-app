@@ -68,8 +68,27 @@ else
   fi
   RELEASE_TAG="$REQUESTED_RELEASE_TAG"
 fi
-if [[ ! "$RELEASE_TAG" =~ '^v[0-9]+\.[0-9]+\.[0-9]+$' ]]; then
-  print -u2 "RELEASE_TAG must be a stable semantic version tag such as v1.8.8"
+# The published tag names the release, so its shape is fixed rather than free
+# text. `vX.Y.Z` is upstream's shape; this fork releases on top of one upstream
+# version and distinguishes its own releases with a `-fork.N` ordinal, which is
+# what `v1.8.25-fork.1` … `v1.8.25-fork.4` already are and what
+# Resources/{zh-Hans,en}.lproj/ReleaseHistory.md already name.
+#
+# Exactly those two forms are accepted. `-fork` with no ordinal, `-fork.` with an
+# empty ordinal, a non-numeric ordinal, a second suffix, any other suffix
+# (`-rc.1`, `-beta`), trailing text and a missing `v` are all still refused: the
+# tag has to be derivable from the version and comparable to the other tags, and
+# anything looser is how a release gets published under a name nothing else in
+# the pipeline recognises.
+#
+# The same shape is enforced on the candidate branch by
+# scripts/verify-preview-branch.sh and scripts/verify-preview-candidate-ci.sh, on
+# the guard's tag argument by scripts/reconcile-release-event.sh, on the
+# Info.plist version by scripts/fast-release.sh, and on the promotion tag by
+# .github/workflows/mac-stable-promote.yml before it calls `promote` here.
+# Changing the shape here means changing it in those five too.
+if [[ ! "$RELEASE_TAG" =~ '^v[0-9]+\.[0-9]+\.[0-9]+(-fork\.[0-9]+)?$' ]]; then
+  print -u2 "RELEASE_TAG must be a version tag such as v1.8.8 or v1.8.25-fork.4"
   exit 1
 fi
 

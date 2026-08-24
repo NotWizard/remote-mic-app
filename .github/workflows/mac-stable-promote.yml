@@ -77,7 +77,9 @@ jobs:
             fi
             tag="v${CANDIDATE_BRANCH#release/pre-v}"
           fi
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          # Same tag shape as scripts/publish-release.sh: vX.Y.Z with an optional
+          # -fork.N ordinal, since that tag is handed straight to it below.
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-fork\.[0-9]+)?$ ]]; then
             echo "invalid stable promotion tag: $tag" >&2
             exit 1
           fi

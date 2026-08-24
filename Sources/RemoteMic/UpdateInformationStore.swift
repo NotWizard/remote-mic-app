@@ -111,7 +111,10 @@ enum UpdateFeedResolver {
 enum UpdateVersion {
     static func normalized(_ rawValue: String) -> String? {
         let value = rawValue.hasPrefix("v") ? String(rawValue.dropFirst()) : rawValue
-        guard value.range(of: #"^\d+(?:\.\d+){1,3}$"#, options: .regularExpression) != nil else {
+        guard value.range(
+            of: #"^\d+(?:\.\d+){1,3}(?:-fork\.\d+)?$"#,
+            options: .regularExpression
+        ) != nil else {
             return nil
         }
         return value
@@ -121,10 +124,9 @@ enum UpdateVersion {
         guard let candidate = normalized(candidate),
               let current = normalized(current)
         else { return false }
-        let candidateParts = candidate.split(separator: ".").compactMap { Int($0) }
-        let currentParts = current.split(separator: ".").compactMap { Int($0) }
-        let count = max(candidateParts.count, currentParts.count)
-        for index in 0..<count {
+        let candidateParts = comparableParts(candidate)
+        let currentParts = comparableParts(current)
+        for index in 0..<max(candidateParts.count, currentParts.count) {
             let candidatePart = index < candidateParts.count ? candidateParts[index] : 0
             let currentPart = index < currentParts.count ? currentParts[index] : 0
             if candidatePart != currentPart {
@@ -132,6 +134,17 @@ enum UpdateVersion {
             }
         }
         return false
+    }
+
+    /// A fork build is derived from the upstream release it names, so the fork ordinal ranks
+    /// last: it only breaks ties between builds that share a base version. Padding the base
+    /// to four components keeps the ordinal from being compared against a base component.
+    private static func comparableParts(_ version: String) -> [Int] {
+        let halves = version.components(separatedBy: "-fork.")
+        var parts = halves[0].split(separator: ".").compactMap { Int($0) }
+        parts.append(contentsOf: Array(repeating: 0, count: max(0, 4 - parts.count)))
+        parts.append(halves.count > 1 ? Int(halves[1]) ?? 0 : 0)
+        return parts
     }
 }
 

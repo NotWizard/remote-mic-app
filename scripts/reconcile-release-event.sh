@@ -9,8 +9,11 @@ EVENT_ACTOR="${2:-}"
 RECORD_PREVIEW="${3:-0}"
 ALLOWED_ACTORS="${STABLE_RELEASE_ACTORS:-HD838A}"
 
-if [[ ( "$#" -ne 2 && "$#" -ne 3 ) || ! "$RELEASE_TAG" =~ '^v[0-9]+\.[0-9]+\.[0-9]+$' || -z "$EVENT_ACTOR" ]]; then
-  print -u2 "usage: $0 vX.Y.Z actor [record-preview]"
+# Same tag shape as scripts/publish-release.sh: `vX.Y.Z` with an optional
+# `-fork.N` ordinal, because publish-release.sh dispatches release-guard.yml with
+# the tag it has just published and the workflow hands it straight to this script.
+if [[ ( "$#" -ne 2 && "$#" -ne 3 ) || ! "$RELEASE_TAG" =~ '^v[0-9]+\.[0-9]+\.[0-9]+(-fork\.[0-9]+)?$' || -z "$EVENT_ACTOR" ]]; then
+  print -u2 "usage: $0 vX.Y.Z|vX.Y.Z-fork.N actor [record-preview]"
   exit 1
 fi
 case "$RECORD_PREVIEW" in

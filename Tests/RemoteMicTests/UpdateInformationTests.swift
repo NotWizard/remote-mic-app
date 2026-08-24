@@ -257,4 +257,39 @@ struct UpdateInformationTests {
             releaseNotes: ["English release note"]
         )))
     }
+
+    /// The shipping short version carries a `-fork.N` suffix. When the comparison could not
+    /// parse it, `isNewer` fell back to false for every upstream release, so the app reported
+    /// itself up to date forever instead of ever offering an update.
+    @Test func aForkBuildIsOrderedAgainstUpstreamByItsBaseVersionThenItsOrdinal() {
+        #expect(UpdateVersion.normalized("1.8.25-fork.4") == "1.8.25-fork.4")
+        #expect(UpdateVersion.normalized("v1.8.25-fork.4") == "1.8.25-fork.4")
+
+        #expect(UpdateVersion.isNewer("1.8.26", than: "1.8.25-fork.4"))
+        #expect(UpdateVersion.isNewer("1.9.0", than: "1.8.25-fork.4"))
+        #expect(UpdateVersion.isNewer("2.0.0", than: "1.8.25-fork.4"))
+
+        // The fork build is derived from 1.8.25, so its own base version is not an update.
+        #expect(!UpdateVersion.isNewer("1.8.25", than: "1.8.25-fork.4"))
+        #expect(!UpdateVersion.isNewer("1.8.24", than: "1.8.25-fork.4"))
+
+        #expect(UpdateVersion.isNewer("1.8.25-fork.5", than: "1.8.25-fork.4"))
+        #expect(!UpdateVersion.isNewer("1.8.25-fork.4", than: "1.8.25-fork.5"))
+        // Ordinal, not lexical: "10" < "9" as text.
+        #expect(UpdateVersion.isNewer("1.8.25-fork.10", than: "1.8.25-fork.9"))
+        #expect(!UpdateVersion.isNewer("1.8.25-fork.9", than: "1.8.25-fork.10"))
+
+        #expect(!UpdateVersion.isNewer("1.8.25-fork.4", than: "1.8.25-fork.4"))
+        #expect(!UpdateVersion.isNewer("1.8.25", than: "1.8.25"))
+
+        // Unparseable input still refuses to claim an update.
+        #expect(UpdateVersion.normalized("1.8.25-fork") == nil)
+        #expect(UpdateVersion.normalized("1.8.25-rc.1") == nil)
+        #expect(!UpdateVersion.isNewer("nonsense", than: "1.8.25-fork.4"))
+        #expect(!UpdateVersion.isNewer("9.9.9", than: "nonsense"))
+
+        // Plain upstream ordering is unchanged by the suffix support.
+        #expect(UpdateVersion.isNewer("1.8.26", than: "1.8.25"))
+        #expect(!UpdateVersion.isNewer("1.8.25", than: "1.8.26"))
+    }
 }

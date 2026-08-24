@@ -1063,9 +1063,9 @@ struct ReleasePublishIdentityTests {
         upstream: "1.8.25 (Pre-release)",
         older: "1.7.5"
     )
-    /// `RELEASE_TAG` still has to match `^v[0-9]+\.[0-9]+\.[0-9]+$`, which is
-    /// checked before these gates and which no `-fork.N` version can satisfy, so
-    /// the title fixtures use a version a tag can currently carry.
+    /// The title fixtures deliberately use a plain `X.Y.Z` version, so the title
+    /// assertions stay about the title and do not double as a second copy of the
+    /// tag-shape assertions in `aForkStyleTagIsAcceptedAndNothingLooserIs`.
     private static let releasableChineseHistory = history(
         newest: "1.9.0（本分支）",
         upstream: "1.8.25（预发布）",
@@ -1211,6 +1211,11 @@ struct ReleasePublishIdentityTests {
         "require_release_history_entry \"$VERSION\" \"Resources/Info.plist CFBundleShortVersionString\""
     private static let keywordGuardCondition =
         "if [[ -z \"${RELEASE_TITLE_KEYWORDS//[[:space:]]/}\" ]]; then"
+    /// The tag shape the user decided on, and the shape it replaced. Both are the
+    /// literal regex text, so a reworded rule makes the negative control throw
+    /// `GuardTextMissing` instead of quietly testing nothing.
+    private static let forkTagRule = #"'^v[0-9]+\.[0-9]+\.[0-9]+(-fork\.[0-9]+)?$'"#
+    private static let threeComponentOnlyTagRule = #"'^v[0-9]+\.[0-9]+\.[0-9]+$'"#
 
     // MARK: - The version being released must be the release the notes describe
 
@@ -1293,19 +1298,63 @@ struct ReleasePublishIdentityTests {
         #expect(run.errors.contains("newest entry present: 1.8.25-fork.4"))
     }
 
-    /// `RELEASE_TAG` is still required to look like `vX.Y.Z`, and that check runs
-    /// before these gates, so a `-fork.N` version cannot be published at all yet.
-    /// Which version string and tag this fork releases under is the release
-    /// author's decision; this records that the decision is still open, and that
-    /// the tooling stops instead of tagging something unintended in the meantime.
-    @Test func aForkStyleVersionIsStoppedByTheExistingTagRule() throws {
+    /// The tag rule runs before these gates, so it decides whether a `-fork.N`
+    /// version can be published at all. The user's decision is that this fork
+    /// keeps the suffix and ships `1.8.25-fork.4`, so both halves of the rule are
+    /// pinned here: the shape this fork releases under gets through and resolves a
+    /// title, and everything looser is still refused before anything is created.
+    @Test func aForkStyleTagIsAcceptedAndNothingLooserIs() throws {
+        let accepted = try runPublish(
+            plistVersion: "1.8.25-fork.4",
+            keywords: "信任 30 天到期、语音键不再失灵、中文字号加大"
+        )
+
+        #expect(!accepted.errors.contains("RELEASE_TAG must be"))
+        #expect(
+            accepted.output.contains(
+                "RELEASE TITLE: v1.8.25-fork.4: 信任 30 天到期、语音键不再失灵、中文字号加大"
+            )
+        )
+        // Nothing past the title is asserted: the throwaway ROOT carries no signed
+        // artifacts, so the run still stops inside verify_local_artifacts.
+
+        // `-fork` with no ordinal, an empty ordinal, a non-numeric ordinal, a
+        // second suffix, extra numeric components, another project's suffix,
+        // trailing text, and the ordinal without its separator. Each arrives
+        // through Info.plist, which is where the tag is derived from, so the
+        // refusal happens on the same route a real release takes.
+        for version in [
+            "1.8.25-fork",
+            "1.8.25-fork.",
+            "1.8.25-fork.x",
+            "1.8.25-fork.4-fork.5",
+            "1.8.25-fork.4.5.6",
+            "1.8.25-rc.1",
+            "1.8.25-fork.4-dirty",
+            "1.8.25fork.4",
+        ] {
+            let refused = try runPublish(plistVersion: version, keywords: "a、b、c")
+
+            #expect(refused.status != 0, "\(version)")
+            #expect(refused.errors.contains("RELEASE_TAG must be a version tag"), "\(version)")
+            #expect(!refused.output.contains("RELEASE TITLE:"), "\(version)")
+            #expect(!refused.output.contains("PUBLISH DRY RUN PASS"), "\(version)")
+        }
+    }
+
+    /// Negative control for the test above: with the pre-decision rule pasted back
+    /// into the copy, the version this fork now ships is refused again and no title
+    /// is resolved, so the assertions above are testing the widened rule rather
+    /// than some later gate.
+    @Test func restoringTheThreeComponentOnlyTagRuleStopsTheForkVersionAgain() throws {
         let run = try runPublish(
             plistVersion: "1.8.25-fork.4",
-            keywords: "信任期限、录音恢复、界面字号"
+            keywords: "信任 30 天到期、语音键不再失灵、中文字号加大",
+            publishPatch: (find: Self.forkTagRule, replace: Self.threeComponentOnlyTagRule)
         )
 
         #expect(run.status != 0)
-        #expect(run.errors.contains("RELEASE_TAG must be a stable semantic version tag"))
+        #expect(run.errors.contains("RELEASE_TAG must be"))
         #expect(!run.output.contains("RELEASE TITLE:"))
         #expect(!run.output.contains("PUBLISH DRY RUN PASS"))
     }

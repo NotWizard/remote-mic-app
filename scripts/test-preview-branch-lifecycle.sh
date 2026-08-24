@@ -101,4 +101,34 @@ if (
 fi
 /usr/bin/grep -Fq "must exactly equal the latest origin/main" "$WORK_DIR/chained-output.txt"
 
+# This fork ships `X.Y.Z-fork.N`, and publish-release.sh runs this verifier on its
+# real prerelease path, so a candidate branch has to be able to carry the ordinal.
+git -C "$TEST_REPO" switch main >/dev/null 2>&1
+prepare_candidate "release/pre-v1.8.15-fork.1" "1.8.15-fork.1" "109" "prepare 1.8.15-fork.1"
+(
+  cd "$TEST_REPO"
+  GITHUB_REF_NAME="" PATH="$FAKE_BIN:/usr/bin:/bin" ./scripts/verify-preview-branch.sh
+) > "$WORK_DIR/fork-output.txt"
+/usr/bin/grep -Fq "PREVIEW BRANCH PASS" "$WORK_DIR/fork-output.txt"
+/usr/bin/grep -Fq "VERSION: 1.8.15-fork.1 (109)" "$WORK_DIR/fork-output.txt"
+
+# Nothing looser than one `-fork.<digits>` ordinal. The branch shape is checked
+# before the version, build, parent and file rules, so each of these stops there.
+for malformed_branch in \
+  "release/pre-v1.8.15-fork" \
+  "release/pre-v1.8.15-fork.x" \
+  "release/pre-v1.8.15-fork.1-fork.2" \
+  "release/pre-v1.8.15-rc.1"; do
+  git -C "$TEST_REPO" switch main >/dev/null 2>&1
+  git -C "$TEST_REPO" switch -c "$malformed_branch" >/dev/null 2>&1
+  if (
+    cd "$TEST_REPO"
+    GITHUB_REF_NAME="" PATH="$FAKE_BIN:/usr/bin:/bin" ./scripts/verify-preview-branch.sh
+  ) > "$WORK_DIR/malformed-output.txt" 2>&1; then
+    print -u2 "malformed preview branch unexpectedly passed: $malformed_branch"
+    exit 1
+  fi
+  /usr/bin/grep -Fq "preview branch must match release/pre-v" "$WORK_DIR/malformed-output.txt"
+done
+
 print "PREVIEW BRANCH LIFECYCLE TEST PASS"

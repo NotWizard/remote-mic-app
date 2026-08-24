@@ -134,10 +134,38 @@
 `RELEASE_TAG` 从环境变量传入时绕过检查；未设 `RELEASE_TITLE_KEYWORDS` 却发出了标题；
 标题里没有关键词或写成 `Remote Mic <版本>`；标题的版本号与 Tag 不一致；页面出现两次标题。
 
-尚未完成（需要用户决定）：本 fork 的版本号与 Tag 格式仍未确定。`Resources/Info.plist` 现在是上游
-`1.8.25`，而最新条目是 `1.8.25-fork.4`，所以第 2 步当前**必然拒绝**；同时
-`publish-release.sh` 既有规则只接受 `^v[0-9]+\.[0-9]+\.[0-9]+$`，`v1.8.25-fork.4` 也过不了。
-第 4–6 步在版本号与 Tag 格式确定之前只能用一次性副本演练，不能当作真实候选验收。
+## 用例 9：Tag、分支与版本号的形状（`-fork.N`）
+
+适用版本或分支：`1.8.25-fork.4` 及之后的任何候选分支。
+
+已确定的版本方案：保留 `-fork.N` 后缀。发布版本为 `1.8.25-fork.4`，Tag 为 `v1.8.25-fork.4`，
+候选分支为 `release/pre-v1.8.25-fork.4`，Build 每次发布必须递增（本版 123，上一版 fork.3 是 122）。
+
+1. 确认 `Resources/Info.plist` 的 `CFBundleShortVersionString` 与两份 `ReleaseHistory.md`
+   的最新条目完全相同，且 `CFBundleVersion` 严格大于上一个 Tag 的 Build。
+   预期：三者一致；Build 递增。Build 未递增时 `verify-preview-branch.sh` 必须拒绝，
+   而且这不是可选项——Sparkle 用 `CFBundleVersion` 判断新旧，沿用旧 Build 的包不会被当作更新。
+2. 逐一用下列 Tag 跑 `DRY_RUN=1 RELEASE_TAG=<tag> zsh scripts/publish-release.sh promote`。
+   预期：`v1.8.8`、`v1.8.25-fork.4` 通过 Tag 形状检查（随后可能被别的门禁拒绝，那是另一回事）；
+   `v1.8.25-fork`、`v1.8.25-fork.`、`v1.8.25-fork.x`、`v1.8.25-fork.4-fork.5`、
+   `v1.8.25-fork.4.5.6`、`v1.8.25-rc.1`、`v1.8.25-fork.4-dirty`、`v1.8.25fork.4`
+   一律退出 1，stderr 为 `RELEASE_TAG must be a version tag such as v1.8.8 or v1.8.25-fork.4`。
+3. 候选分支名同形状：`release/pre-v1.8.25-fork.4` 必须通过 `verify-preview-branch.sh`，
+   `release/pre-v1.8.25-fork`、`…-fork.x`、`…-fork.1-fork.2`、`…-rc.1` 必须在分支形状处就被拒。
+   本地可用 `zsh scripts/test-preview-branch-lifecycle.sh` 在临时 bare remote 中跑完这一整组。
+4. 确认同形状规则的七处实现一致：`publish-release.sh`、`verify-preview-branch.sh`、
+   `verify-preview-candidate-ci.sh`、`reconcile-release-event.sh`、`fast-release.sh`、
+   `notarize-release.sh:71`（它本就用 `([.-][0-9A-Za-z.-]+)?`，比其余六处宽松，连 `-rc.1` 也收），
+   以及 `.github/workflows/mac-stable-promote.yml`（它把 Tag 直接交给 `publish-release.sh promote`，
+   不放宽则 `-fork.N` 候选永远无法晋升正式版）。
+   预期：任何一处收紧或放宽都会让真实发布在候选校验、签名打包、Release Guard 或正式晋升处半途失败。
+
+失败判定：畸形 Tag 或畸形分支名被接受；`v1.8.25-fork.4` 被拒；Build 未递增却能继续；
+六处形状规则出现分歧；`1.8.25` 的查找回归成 fork 条目。
+
+尚未在本机执行（缺 Developer ID 证书）：真实签名、公证、appcast 生成、Sparkle 安装更新，
+以及非 DRY_RUN 的 `publish-release.sh`。用例 8 第 2 步的 DRY_RUN 现在能通过版本身份门与标题门，
+但会停在缺失的 `dist/Remote-Mic-<版本>.zip`（已签名 Sparkle 归档）处；第 6 步仍需真实候选 Release 页面。
 
 ## 稳定功能回归
 
@@ -161,6 +189,16 @@
 - 以规范分节表情开头但不等于八个规范分节标题的标题（`## 🎉 9.9.8 …`、`## 🎉 版本九点九点八`、
   `## ⚠️Heads-up`、`## ⚠ 注意事项` 等）必须让抽取非 0 退出并指出标题与文件，既不合并也不静默截断；
   Sparkle 的纯文本更新说明与 GitHub 正文共用同一个抽取脚本，两条路径必须一起失败。
+- 版本号带 `-fork.N` 后缀后，制品名跟着变长（`Remote-Mic-1.8.25-fork.4.dmg`、
+  `MiRemoteV2ch-Driver-1.8.25-fork.4.dmg`、`Remote-Mic-<版本>.{zh,en}.txt`、`…dmg.sha256`、
+  DMG 卷名）。`build-app.sh`、`verify-app.sh`、`build-dmg.sh`、`verify-dmg.sh`、
+  `build-driver-dmg.sh` 必须全部退出 0，`verify-dmg.sh` 打印的版本与 Build 必须与
+  `Info.plist` 一致。
+- 驱动安装 pkg 的 payload 仍必须**没有任何** `Applications` 条目（`lsbom -s` 实测 0 条）：
+  这是 fork.2 那次「安装包删掉用户已装 App」事故的反向门禁，版本号形状变化不得放松它。
+- 「关于」页的当前版本号现在是 13 个字符、28pt semibold。渲染测试里 `Bundle.main` 读不到本仓
+  `Info.plist`（显示为「未知/Unknown」），因此这一项**没有自动化覆盖**，需要在真实窗口按当前生产
+  `minSize` 确认不换行、不裁切、不改变窗口几何。
 
 ## 日志收集
 
@@ -178,9 +216,18 @@
 - 用例 8 的门禁由同一文件里的 `Release publish identity gates` 套件覆盖：它把 `scripts/` 与
   `Resources/` 复制到一次性 ROOT，在其中运行真实的 `publish-release.sh` 和 `notarize-release.sh`，
   每个守卫都配一条「把守卫从副本里删掉后必须失败」的负向对照。
-- **DRY_RUN 目前只能走到拒绝**：仓库 `dist/` 没有已签名公证的 Sparkle zip、appcast 和 Intel 变体，
-  `verify_local_artifacts` 之后的路径无法在本地执行。用例 8 第 5 步的 `RELEASE TITLE:` 行只在
-  一次性副本里演练过，**真实签名、公证、appcast 生成和 Sparkle 安装更新都未执行**。
+- **DRY_RUN 只能走到制品缺失处**：仓库 `dist/` 没有已签名公证的 Sparkle zip、appcast 和 Intel
+  变体。带 `-fork.4` 版本号的 DRY_RUN 现在会通过版本身份门与标题门（打印
+  `RELEASE TITLE: v1.8.25-fork.4: …`），走过卸载 pkg、`Remote-Mic-1.8.25-fork.4.dmg` 与其
+  `.sha256`，停在缺失的 `Remote-Mic-1.8.25-fork.4.zip`；**真实签名、公证、appcast 生成和
+  Sparkle 安装更新都未执行。**
+- 用例 9 的 Tag 形状由 `ReleaseNotesExtractionTests.swift` 的
+  `aForkStyleTagIsAcceptedAndNothingLooserIs` 覆盖（含 8 个畸形版本），分支形状由
+  `scripts/test-preview-branch-lifecycle.sh` 在临时 bare remote 中真实执行覆盖；
+  Tag 规则有一条「把规则改回三段式后必须失败」的负向对照；`test-preview-branch-lifecycle.sh`
+  只有正向用例与 4 个畸形分支名拒绝用例，**没有**规则回退对照，分支形状回退不会被自动发现。
+  `verify-preview-candidate-ci.sh` 与 `reconcile-release-event.sh` 的同形状规则只做过静态审查，
+  它们需要 `gh` 与远端状态，尚未真实执行。
 - 残余风险：完全不带规范分节表情的标题（例如 `## 版本说明`）仍会被当成下一个版本、直接终止条目，
   没有任何提示。以分节表情开头的近似标题（含 `## 🎉 版本九点九点八`、全角数字写法）现在会非 0 退出，
   不再静默合并；但表情之外的写法只能靠用例 7 第 4 步的分节/列表项计数发现。

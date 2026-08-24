@@ -32,8 +32,11 @@ if [[ "${ALLOW_ISOLATED_RELEASE_KEYCHAIN:-0}" != "1" ]]; then
   print -u2 "Set ALLOW_ISOLATED_RELEASE_KEYCHAIN=1 to authorize the temporary release Keychain"
   exit 1
 fi
-if [[ ! "$VERSION" =~ '^[0-9]+\.[0-9]+\.[0-9]+$' || ! "$BUILD" =~ '^[0-9]+$' ]]; then
-  print -u2 "fast release requires a stable semantic version and numeric build"
+# Same version shape as the tag rule in scripts/publish-release.sh: `X.Y.Z` with
+# an optional `-fork.N` ordinal. The build stays a plain integer, which is what
+# Sparkle compares and what verify-preview-branch.sh requires to increase.
+if [[ ! "$VERSION" =~ '^[0-9]+\.[0-9]+\.[0-9]+(-fork\.[0-9]+)?$' || ! "$BUILD" =~ '^[0-9]+$' ]]; then
+  print -u2 "fast release requires an X.Y.Z or X.Y.Z-fork.N version and a numeric build"
   exit 1
 fi
 for command in cmp curl gh git plutil rg xcrun; do

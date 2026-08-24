@@ -442,11 +442,12 @@ EXIT=1        ← 无任何输出，死在 verify_local_artifacts 的 test -f �
 `rg -q '^- '`，任何非空条目都能满足，所以错配只会得到「另一个版本的说明」而不会报错。
 门放在构建之前，拒绝成本是秒级而不是一整轮签名。
 
-**不在本次范围**：fork 用什么版本号和什么 Tag 由用户决定，因此没有改 `Resources/Info.plist`。
-需要注意 `publish-release.sh` 还有一条**早于**本门的既有规则
+**当时不在范围、现已确定**：fork 用什么版本号和什么 Tag 当时由用户决定，因此没有改
+`Resources/Info.plist`。`publish-release.sh` 还有一条**早于**本门的既有规则
 `RELEASE_TAG must be a stable semantic version tag`（`^v[0-9]+\.[0-9]+\.[0-9]+$`），
-`v1.8.25-fork.4` 过不了。也就是说把 Info.plist 改成 fork 版本号并不足以发布，
-Tag 格式必须一并决定。该阻塞已固化为测试 `aForkStyleVersionIsStoppedByTheExistingTagRule`。
+`v1.8.25-fork.4` 过不了；也就是说把 Info.plist 改成 fork 版本号并不足以发布，
+Tag 格式必须一并决定。该阻塞当时固化为测试 `aForkStyleVersionIsStoppedByTheExistingTagRule`。
+用户已给出决定，见本文件末节「版本号与 Tag 格式的决定」；该测试也已按新契约重写。
 
 ### 缺陷 B：Release 标题不符合规范
 
@@ -551,3 +552,146 @@ $ zsh scripts/extract-release-notes.sh 1.8.2 Resources/zh-Hans.lproj/ReleaseHist
   （改副本的 Info.plist 和版本历史，不动仓库文件）验证到 `RELEASE TITLE:` 行为止。
 - **真实签名、公证、appcast 生成、Sparkle 安装更新和任何真机验收本轮都没有执行。**
 - 未创建 Tag、未创建 Release、未 push；改动全部留在工作区。
+
+## 版本号与 Tag 格式的决定（用户已确定，本轮落地）
+
+用户的决定：**保留 `-fork.N` 后缀**，把发布版本抬到 `1.8.25-fork.4`，并把 Tag 规则放宽到
+接受这个后缀。上一节留下的阻塞至此关闭，本节记录改了什么、为什么、以及验证到哪一步。
+
+### `Resources/Info.plist`
+
+`CFBundleShortVersionString`：`1.8.25` → `1.8.25-fork.4`。
+`CFBundleVersion`：`122` → `123`。
+
+Build 必须递增，不是可选项，两条独立证据：
+
+1. **历史用法**：本 fork 的 Build 一直是唯一单调计数器，因为营销版本号一直停在 `1.8.25`。
+   实测各 Tag 的 `CFBundleVersion`：`v1.8.25`=119、`v1.8.25-fork.1`=120、
+   `v1.8.25-fork.2`=121、`v1.8.25-fork.3`=122。也就是说 122 **已经随 fork.3 发布过**，
+   fork.4 沿用 122 就是用同一个 Build 发两个不同的包。
+2. **Sparkle 语义**：`notarize-release.sh` 用 `--versions "$BUILD"` 生成 appcast 并断言
+   `<sparkle:version>$BUILD</sparkle:version>`，`publish-release.sh` 也对两个 appcast 断言同一行。
+   Sparkle 比较的是 `sparkle:version`（即 `CFBundleVersion`），
+   `sparkle:shortVersionString` 只用于显示。Build 不变意味着装了 fork.3 的用户
+   **永远收不到 fork.4**，而且不会有任何报错。
+
+第三条旁证：`verify-preview-branch.sh` 要求 `CFBundleVersion` 必须大于上一个 Tag 的 Build。
+实测 `git for-each-ref --sort=-version:refname 'refs/tags/v[0-9]*'` 的首位是
+`v1.8.25-fork.3`（排在 `v1.8.25` 之前），所以该门禁取到的上一个 Build 就是 122，
+122 会被拒绝，123 通过。`is-at-least 1.8.25-fork.3 1.8.25-fork.4` 实测为真，
+版本序也成立。
+
+### Tag 规则
+
+`scripts/publish-release.sh`：
+
+```
+- '^v[0-9]+\.[0-9]+\.[0-9]+$'
++ '^v[0-9]+\.[0-9]+\.[0-9]+(-fork\.[0-9]+)?$'
+```
+
+**接受**：`v1.8.8`、`v1.8.25`、`v1.8.25-fork.4`（以及任意 `-fork.<数字>` 序号）。
+**仍然拒绝**：`v1.8.25-fork`（无序号）、`v1.8.25-fork.`（空序号）、
+`v1.8.25-fork.x`（非数字）、`v1.8.25-fork.4-fork.5`（两个后缀）、
+`v1.8.25-fork.4.5.6`（多出数字段）、`v1.8.25-rc.1`（其他后缀）、
+`v1.8.25-fork.4-dirty`（尾部多余文字）、`v1.8.25fork.4`（缺分隔符）、缺 `v`、空串。
+
+同一形状还出现在另外五处，都跟着放宽，否则真实发布会被自己的门禁挡在半路：
+
+| 脚本 | 原规则 | 为什么必须一起改 |
+| --- | --- | --- |
+| `verify-preview-branch.sh` | `^release/pre-v([0-9]+\.[0-9]+\.[0-9]+)$` | `publish-release.sh` 的真实（非 DRY_RUN）预发布路径调用它，`release/pre-v1.8.25-fork.4` 会被拒 |
+| `verify-preview-candidate-ci.sh` | `^release/pre-v[0-9]+\.[0-9]+\.[0-9]+$` | 签名打包前的候选 CI 门禁，且它自己又调用上一个脚本 |
+| `reconcile-release-event.sh` | `^v[0-9]+\.[0-9]+\.[0-9]+$` | `publish-release.sh` 发布成功后用该 Tag 触发 `release-guard.yml`，workflow 原样传给它 |
+| `fast-release.sh` | `^[0-9]+\.[0-9]+\.[0-9]+$`（版本，不是 Tag） | 它从 Info.plist 推出 Tag 与候选分支后再调用上面两个脚本，否则成为唯一还卡三段版本号的入口 |
+| `.github/workflows/mac-stable-promote.yml` | `^v[0-9]+\.[0-9]+\.[0-9]+$`（bash） | 它把 Tag 直接交给 `publish-release.sh promote`；不改则 `-fork.N` 候选永远无法晋升正式版 |
+
+### 查过但**没有**改的地方
+
+- `notarize-release.sh:71` 的 Tag 规则本来就是
+  `^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$`，已经接受 `v1.8.25-fork.4`。它比新形状宽松
+  （还接受 `-rc.1`，其自身报错文案也这么写），但**能用**，收紧它是另一个决定，本轮不动。
+- 文件名构造全部是字符串拼接，后缀只是变长：`Remote-Mic-1.8.25-fork.4.dmg`、
+  `MiRemoteV2ch-Driver-1.8.25-fork.4.dmg`、`Remote-Mic-1.8.25-fork.4.{zh,en}.txt`、
+  `Remote-Mic-1.8.25-fork.4.dmg.sha256`、DMG 卷名和 `build-app.sh` 的
+  `/private/tmp/remote-mic-swiftpm/$VERSION-$BUILD/…` scratch 路径，实测全部正常。
+- `publish-release.sh` 的资产清单排序用 `LC_ALL=C sort`（纯字典序，不是 `sort -V`），
+  与版本形状无关。仓库里没有任何 `sort -V`。
+- `Sources/RemoteMic/UpdateInformationStore.swift` 的 `UpdateVersion.normalized` 原先只接受
+  `^\d+(?:\.\d+){1,3}$`，`1.8.25-fork.4` 归一化失败。**这是本轮引入的真实回归，复核否决后已修**。
+  最初的判断三点全错，复核逐条用执行推翻：
+  ① 不是「fork 没有 appcast 所以走不通」——`RemoteMicApp.swift:117` 的检查目标写死为**上游**
+  `api.github.com/repos/HD838A/remote-mic-app/releases`，上游 Release 带 `appcast.xml`，该路径通着，
+  fork 自己有没有资产无关；
+  ② 不是 `latestFeed` 抛 `feedNotFound`——归一化失败的是 `RemoteMicApp.swift:784-790` 传入的
+  **App 自己的短版本号**，`isNewer` 只要任一侧解析失败就返回 `false`；
+  ③ 不是「早就存在」——fork.1–fork.3 的 `CFBundleShortVersionString` 全部是 `1.8.25`，
+  能解析；把它改成带后缀才第一次让这条路径失效。
+  实测后果：`isNewer("1.8.26", than:"1.8.25-fork.4")` 为 `false`（`1.9.0`、`2.0.0` 同样），
+  `:787` 的 `guard` 必然失败 → `setUpToDate()` 直接返回，`checkForUpdates` 再也到不了，
+  「检查更新」和关于页横幅会永远显示已是最新。不崩溃、不显示 Unknown，纯静默。
+  修法：归一化接受 `-fork.N`，排序上 fork 序号排在最后——fork 构建派生自它标注的上游版本，
+  所以上游 `1.8.26` 比 `1.8.25-fork.4` 新，而 `1.8.25` 本身不算新，序号只在基版本相同时比较。
+  负向对照：把正则改回三段式，新增回归项报 7 处 issue、退出 1，还原后 sha256 一致。
+  Sparkle 自身用 `CFBundleVersion` 比较，但它根本没被问到，所以那一点也不构成豁免。
+
+### 验证（各命令单独执行，退出码单独取）
+
+| 命令 | 退出码 | 关键输出 |
+| --- | --- | --- |
+| `DRY_RUN=1 RELEASE_TITLE_KEYWORDS='信任 30 天到期、语音键不再失灵、中文字号加大' zsh scripts/publish-release.sh prerelease` | 1 | `RELEASE TITLE: v1.8.25-fork.4: 信任 30 天到期、语音键不再失灵、中文字号加大`；`zsh -x` 显示它已通过版本身份门与标题门，走过卸载 pkg、`Remote-Mic-1.8.25-fork.4.dmg` 及其 `.sha256`，停在缺失的 `dist/Remote-Mic-1.8.25-fork.4.zip` |
+| `zsh scripts/extract-release-notes.sh 1.8.25-fork.4 <中/英两份>` | 0 | 各自抽出本条目；`--newest-version` 两份都是 `1.8.25-fork.4` |
+| `zsh scripts/extract-release-notes.sh 1.8.25 <中/英两份>` | 0 | 仍是上游 `1.8.25（预发布）`/`(Pre-release)` 的内容，没有回归成 fork 条目 |
+| `zsh scripts/compose-release-body.sh 1.8.25-fork.4 …` | 0 | 6 个标题、`^---$` 恰好 1 行、`^# ` 0 行，中文半在英文半之前 |
+| `zsh scripts/build-app.sh` / `verify-app.sh` | 0 / 0 | `APP VERIFY PASS` |
+| `BUILD_COMPONENTS=0 zsh scripts/build-dmg.sh` / `verify-dmg.sh` | 0 / 0 | `Remote-Mic-1.8.25-fork.4.dmg`，`VERSION: 1.8.25-fork.4 (123)` |
+| `zsh scripts/build-driver-dmg.sh` | 0 | `MiRemoteV2ch-Driver-1.8.25-fork.4.dmg`，两个 pkg 校验通过 |
+| `lsbom -s` 驱动安装 pkg 的 payload BOM | 0 | 35 条，`Applications` 条目 **0** 条（091b70e 事故的反向门禁） |
+| `swift test` | 0 | 390 项 / 34 套（改前 389 项 / 34 套：1 项按新契约重写，1 项新增负向对照） |
+| `zsh scripts/test.sh` | 0 | `RESULT passed=42 failed=0` |
+| `zsh scripts/check-repository-boundaries.sh` | 0 | `REPOSITORY BOUNDARY PASS` |
+| `zsh scripts/test-preview-branch-lifecycle.sh` | 0 | 新增 `release/pre-v1.8.15-fork.1` 候选通过并打印 `VERSION: 1.8.15-fork.1 (109)`，四个畸形分支名仍被拒 |
+
+### 回归项与负向对照
+
+- `aForkStyleVersionIsStoppedByTheExistingTagRule` 记录的是被用户否决掉的旧规则，
+  已重写为 `aForkStyleTagIsAcceptedAndNothingLooserIs`：既断言 `1.8.25-fork.4` 通过并解析出
+  `RELEASE TITLE: v1.8.25-fork.4: …`，又对 8 个畸形版本逐个断言非 0 退出、
+  错误里含 `RELEASE_TAG must be a version tag`、且**没有**打印标题。断言只增不减。
+- `restoringTheThreeComponentOnlyTagRuleStopsTheForkVersionAgain`：在脚本副本里把规则换回
+  `^v[0-9]+\.[0-9]+\.[0-9]+$`，fork 版本重新被拒且无标题。规则文本对不上时
+  `applying(_:to:)` 会抛 `GuardTextMissing`，不会假装通过。
+- 工作区级负向对照（改真脚本 → 跑 → 从 `/private/tmp` 备份恢复 → 校验 SHA-256 相同）：
+  - 把 `publish-release.sh` 的规则改回三段式：
+    `swift test --filter aForkStyleTagIsAcceptedAndNothingLooserIs` 退出 1（2 处 issue），
+    同一条 DRY_RUN 命令退出 1 并打印 `RELEASE_TAG must be a version tag such as v1.8.8 or v1.8.25-fork.4`；
+    恢复后 `a33c1df3effb915d8e44de4bf328648f71378d87504c9b53e8263b840717a3b0` 一致。
+  - 把 `verify-preview-branch.sh` 的分支规则改回三段式：
+    `zsh scripts/test-preview-branch-lifecycle.sh` 退出 1，
+    停在 `preview branch must match release/pre-v…`（只回滚了正则、没回滚文案，所以打印的是新文案，
+    但被拒这件事证明正则是起作用的那一半）；恢复后
+    `6663360de61f4130f0e3d9ef6367d8095d32c257580bae7d68060fa52dddcd12` 一致。
+
+### 自动化与真机边界
+
+- 本轮仍不改 App 运行时逻辑，只改发布元数据与发布脚本的形状规则。
+- **未执行**：真实签名、公证、appcast 生成、Sparkle 安装更新，以及非 DRY_RUN 的
+  `publish-release.sh`。本机没有 Developer ID 证书，`dist/` 也没有已签名的 Sparkle zip
+  与 Intel 变体，所以 DRY_RUN 只能走到该 zip 缺失处为止。
+- `verify-preview-candidate-ci.sh` 与 `reconcile-release-event.sh`：**拒绝那一半本地实测过**，
+  因为两者的形状检查都排在任何 `gh` 调用和网络访问之前。
+  `zsh scripts/reconcile-release-event.sh <畸形 tag> someactor` 对
+  `v1.8.25-fork`、`v1.8.25-fork.x`、`v1.8.25-fork.4-fork.5`、`v1.8.25-rc.1` 全部退出 1，
+  打印 `usage: … vX.Y.Z|vX.Y.Z-fork.N actor [record-preview]`；
+  `GITHUB_REF_NAME=<畸形分支> zsh scripts/verify-preview-candidate-ci.sh` 对
+  `release/pre-v1.8.15-fork`、`…-fork.x`、`…-fork.1-fork.2`、`…-rc.1` 全部退出 1，
+  打印 `candidate CI verification requires release/pre-vX.Y.Z or release/pre-vX.Y.Z-fork.N`。
+  **接受那一半只做了静态审查**：形状检查通过后它们立刻需要 `gh`、远端与 Release 状态，本轮没有执行。
+  `.github/workflows/mac-stable-promote.yml` 的同一形状只用 `bash` 单独跑过该正则
+  （`v1.8.25`、`v1.8.25-fork.4` 接受；`v1.8.25-fork`、`v1.8.25-rc.1`、
+  `v1.8.25-fork.4-fork.5`、`v1.8.25fork.4` 拒绝），**workflow 本身没有执行**。
+- **未验收**：「关于」页的当前版本号从 `1.8.25`（6 字符）变成 `1.8.25-fork.4`（13 字符），
+  以 28pt semibold 显示。`SettingsPageRenderingTests` 里 `Bundle.main` 是测试可执行文件，
+  读不到本仓 `Info.plist`，渲染出的是「未知/Unknown」，因此**这个更长的版本号没有任何自动化覆盖**，
+  需要在真实窗口按 `Testing/AboutUpdateCenter.md` 与本仓 minSize 门禁看一次是否换行或裁切。
+- 未创建 Tag、未创建 Release、未 commit、未 push；改动全部留在工作区。
