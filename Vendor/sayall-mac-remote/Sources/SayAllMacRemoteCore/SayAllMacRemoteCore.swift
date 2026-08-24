@@ -106,7 +106,16 @@ open class NearbyRemoteTransport {
 
     open func stop() {}
 
-    open func updateButtonTitles(_ titles: [String: String]) {}
+    open func updateButtonTitles(_ titles: [String: String]) {
+        // Records receipt through the same injected logger start() uses. The real transport
+        // would forward these titles to its counterparty; the fork stub cannot, but logging
+        // the delivery lets a test confirm the Mac pushed the computed titles to this
+        // transport. Only the count and button raw values are logged, never the action text.
+        logger(
+            "\(label) button_titles count=\(titles.count) "
+                + "buttons=\(titles.keys.sorted().joined(separator: ","))"
+        )
+    }
 }
 
 public final class PhoneRemoteServer: NearbyRemoteTransport {

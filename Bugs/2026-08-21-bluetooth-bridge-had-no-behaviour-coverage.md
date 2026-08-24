@@ -354,11 +354,11 @@ B 类三个数字互相吻合（314 / ~314 / 317），差异都落在 A 类。`S
 
 删掉 33 项源码文本断言（19 + 10 + 4），其中 3 项按下节理由原样保留在一个新测试里，净减 30。新增 65 项行为断言（28 + 25 + 12）。测试项数 338 → **339**（净 +1 个测试函数：转换是 1:1 替换，多出来的一个是「保留项」测试），套数不变。
 
-## 剩余：225 项 A 类未转换，理由分四种
+## 剩余：约 225 项 A 类未转换（`1f821f3` 时的量级估计；整改收尾轮又转 1 项，见第 1 条），理由分四种
 
-1. **本次刻意保留、有明确无运行期表面理由的 3 项**，集中在新测试 `connectionApprovalPartsWithoutARuntimeSurfaceStayDeclared`，并在其文档注释里逐条写明：
-   - `watchBluetoothServer.updateButtonTitles(titles)` —— fork 存根的 `updateButtonTitles` 是空方法，不写日志也不暴露状态，「Watch 是否收到标题」在本仓库内不可观察；
+1. **刻意保留、有明确无运行期表面理由的 2 项**，集中在 `modalStopWaitingButtonPartsWithoutARuntimeSurfaceStayDeclared`（原名 `connectionApprovalPartsWithoutARuntimeSurfaceStayDeclared`，整改收尾轮改名并瘦身），并在其文档注释里逐条写明：
    - `LocalizedMessage("connection.phone.cancel_waiting")` 与 `response == .alertThirdButtonReturn` —— 都属于模态 `NSAlert` 的第三个按钮，要走到必须 `runModal()`，会卡住整个套件，且没有可注入的呈现器。
+   - **已不再保留**：`watchBluetoothServer.updateButtonTitles(titles)` 原按「fork 存根不暴露状态、Watch 是否收到标题不可观察」保留为源码文本；整改收尾轮加了最小接缝——存根的 `updateButtonTitles` 改为像 `start()` 一样经注入 logger 记录收到（`WATCH REMOTE button_titles count=… buttons=…`），Watch 的收到因此可观察，该项已转为行为断言 `theButtonTitlesTheMacComputesReachTheWatchTransport`（负向对照删掉生产里 `watchBluetoothServer.updateButtonTitles(titles)` 即红，旧的 `source.contains` 因子串仍在注释里而保持绿）。
 2. **`SettingsPageRegressionTests.swift` 剩余 147 项**：绝大多数断言的是 `SettingsView.swift` / `RemoteMicApp.swift` / `RemoteMappingCanvas.swift` 里 SwiftUI view body 的内部结构（某个 `Text` 用了哪个字体 token、某两个分节的先后、某个修饰器没有出现、`.strings` 里的具体译文）。这些要换成行为断言需要快照或离屏渲染设施，本仓库目前只有 `SettingsScreenshotRenderer` 这一条尚未被测试驱动的路径。其中 `corruptedSettingsBannerIsInlineAndNeverShrinksChineseBelowTwelvePoints` 已经自带理由注释，且已经把「token 的字号必须 ≥ 12pt」这半边做成了数值断言，不属于纯文本断言。
 3. **`OnboardingFlowTests.swift` 44 项、`RemoteButtonsTests.swift` 24 项、`FeedbackLinkTests.swift` 7 项**：同类，多为 view body 结构与常量。`RemoteButtonsTests` 那 24 项里，上一节已经查清并记录了 `HIDRemoteMonitor` arm/callback 先后那 2 项的可行路径，仍未做。
 4. **B 类 317 项**：守构建脚本与打包不变量，没有运行期表面，按约定保留，本次一行未动（`BuildSigningTests.swift` 的 308 项即在此列）。

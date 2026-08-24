@@ -14,7 +14,7 @@
 - **A9-1（字号）**：真实存在且所有用户可见。中文界面在 52 处以 10pt 或 11pt 渲染。
 - **A9-2（弹窗中文硬编码）**：真实存在且英文用户必然命中。授权弹窗是安全决策界面，英文用户在此处看到全中文。
 - **A9-3（遥控器插图被压）**：布局计算确实错误，但**在生产窗口下不可达**——`minSize` 为 1020 × 772，画布宽度不会低于 867pt。它可达的唯一路径是 `SettingsScreenshotRenderer`，该工具接受 `800 × 650` 并绕过最小尺寸；也就是说，用来满足 `AGENTS.md` 门禁的那个工具本身渲染的是重叠版本。
-- **A9-4（`minSize` 与 `800 × 650` 门禁矛盾）**：**本次不修**，只出结论供决策，见文末。
+- **A9-4（`minSize` 与 `800 × 650` 门禁矛盾）**：`8b30824` 当次只出结论；后续 `a7b5c4d` 已把门禁改为跟随生产 `minSize`（`minSize` 未改），详见文末 A9-4 的更新。
 
 **没有用户报告过这四项中的任何一项。** 全部来自代码审计。
 
@@ -209,9 +209,9 @@ ISOLATED swift test EXIT=0
 
 对应测试手册：[`Testing/InterfaceFontAndLocaleCompliance.md`](../Testing/InterfaceFontAndLocaleCompliance.md)。
 
-## A9-4：`minSize` 与 `800 × 650` 门禁的矛盾——只出结论，未实施
+## A9-4：`minSize` 与 `800 × 650` 门禁的矛盾——结论与后续落地
 
-`AGENTS.md:64` 要求「设置页面内容或容器发生变化时，至少在 `800 × 650` 窗口逐一点击全部受影响的侧边栏入口」。生产 `RemoteMicApp.swift:721` 的 `window.minSize = NSSize(width: 1020, height: 772)` 使该窗口尺寸不可达，门禁按字面无法执行。**本次未改 `AGENTS.md`，也未改 `minSize`。**
+`AGENTS.md:64` 曾要求「设置页面内容或容器发生变化时，至少在 `800 × 650` 窗口逐一点击全部受影响的侧边栏入口」。生产 `RemoteMicApp.swift:721` 的 `window.minSize = NSSize(width: 1020, height: 772)` 使该窗口尺寸不可达，门禁按字面无法执行。**本节写于 `8b30824` 时确为「只出结论、未实施」；此后 `a7b5c4d` 已把 `AGENTS.md:64` 改为跟随当前生产 `minSize`（现为 `1020 × 772`，见 `RemoteMicApp.swift`）而不写死尺寸，`minSize` 本身仍未改。** 下文「最小的诚实调和方案」的三步现已落地，见该节末尾的更新。
 
 ### 哪一个是过期物：`AGENTS.md` 的 `800 × 650`
 
@@ -252,4 +252,6 @@ ISOLATED swift test EXIT=0
 
 不建议把 `minSize` 降到 800 × 650：那要求重做映射页页头与关于页语言行的固定 400pt 布局，属于产品级返工，与本次四个缺陷无关；上面第 1 条是不改产品行为就能让门禁重新可执行的最小改法。
 
-**以上三步本次一步都没做。**
+**更新（后续已落地）**：上述三步现已实施，`minSize` 本身按建议未改。第 1 步由 `a7b5c4d` 完成（`AGENTS.md:64` 改为跟随生产 `minSize`）；第 2 步由 `SettingsPageRenderingTests`（`a908e11`）以离屏渲染器覆盖 5 个页面；第 3 步在整改收尾轮统一了余下写 `800 × 650` 的手册（`VoiceTriggerKey.md`、`ConfigurationImportValidation.md`、`QuickCommandsPrivateIntegration.md`）并把 `CustomApplicationFocus.md:149` 那个已勾选项退回未验证。
+
+（原文此处曾写「以上三步本次一步都没做」，那只适用于 `8b30824` 那次会话；后续提交已按上述更新落地，故删去该句以免与实际提交矛盾。）

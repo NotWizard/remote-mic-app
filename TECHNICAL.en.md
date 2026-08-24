@@ -111,7 +111,7 @@ This mode only adapts the trigger semantics seen by the target app. The RC003 mu
 
 The app runs as an LSUIElement accessory and has no Dock icon. The status item receives left and right mouse-up events:
 
-- Left-click creates or brings forward a resizable 800×650 settings window.
+- Left-click creates or brings forward a resizable settings window with a 1020×772 minimum.
 - Right-click shows connection, audio, and HID status plus reconnect, settings, logs, language, About, version, update, GitHub, and Quit actions.
 
 On macOS 26, the settings window uses native `glassEffect`, glass button styles, and scroll-edge effects. On macOS 14/15 it uses standard buttons, system Material panels, and compatible selection states. Both paths share the same functionality and layout and follow the system light/dark appearance, reduced transparency, and increased contrast settings.

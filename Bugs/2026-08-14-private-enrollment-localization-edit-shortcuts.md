@@ -38,4 +38,4 @@
 - 宿主注入两个私有包运行 `swift test --filter SettingsPageRegressionTests`，13 项通过。
 - 三个工作区 `git diff --check` 通过。
 
-自动化验证了资源解析与菜单配置，没有替代最终 Developer ID App 的真实页面操作。发布前仍需在中英文系统环境、`800 × 650` 窗口和真实键盘上复验全部文本、布局及快捷键。
+自动化验证了资源解析与菜单配置，没有替代最终 Developer ID App 的真实页面操作。发布前仍需在中英文系统环境、当前生产 `minSize`（以 `RemoteMicApp.swift` 为准，现为 `1020 × 772`）窗口和真实键盘上复验全部文本、布局及快捷键（更窄布局用 `REMOTE_MIC_SETTINGS_SCREENSHOT_SIZE` 离屏渲染，注明为离屏结果）。

@@ -306,20 +306,69 @@ struct SettingsPageRegressionTests {
         #expect(sink.count(of: "MOBILE VOICE stopped source=iphone") == 1)
     }
 
-    /// Three assertions from the two tests above that have no runtime surface, kept rather
-    /// than dropped.
+    /// The button titles the Mac computes reach the Apple Watch transport, not just the phone.
     ///
-    /// - `watchBluetoothServer.updateButtonTitles(titles)`: the fork-local transport's
-    ///   `updateButtonTitles` is an empty method that logs nothing and exposes nothing, so
-    ///   whether the watch received the titles is not observable from this repository.
-    /// - `connection.phone.cancel_waiting` and `response == .alertThirdButtonReturn`: both
-    ///   belong to the third button of a modal `NSAlert`. Reaching them requires
-    ///   `runModal()`, which would block the suite, and there is no injectable presenter.
+    /// This replaces the source-text assertion `watchBluetoothServer.updateButtonTitles(titles)`,
+    /// which only proved the call was still written, not that the watch actually received the
+    /// titles a user's mapping produces — the exact failure mode the whole effort targets. The
+    /// fork-local transport now records receipt through the same injected logger it already uses
+    /// for `start()`, so the watch's receipt is observable. Driving `updatePhoneRemoteButtonTitles`
+    /// also exercises the real title rule: only bindings that differ from the default become a
+    /// title, keyed by the button's raw value.
+    ///
+    /// Negative control: deleting `watchBluetoothServer.updateButtonTitles(titles)` from
+    /// `BridgeAppModel.updatePhoneRemoteButtonTitles` removes the `WATCH REMOTE button_titles`
+    /// line and turns the first expectation red, whereas the old substring assertion stayed green.
+    @MainActor
+    @Test func theButtonTitlesTheMacComputesReachTheWatchTransport() throws {
+        let scope = try Self.scopedSettings("watchButtonTitles")
+        defer { scope.tearDown() }
+        let model = BridgeAppModel(settings: scope.settings)
+        let sink = LogSink()
+        let token = AppLogger.shared.addWriteObserver { sink.record($0) }
+        defer { AppLogger.shared.removeWriteObserver(token) }
+        let localization = LocalizationStore(settings: scope.settings)
+
+        // One binding that differs from its default (power defaults to Escape) becomes exactly
+        // one title, keyed by the button's raw value. Every other button is left at its default
+        // so it produces nothing — a button absent from the map would fall to `.disabled`, which
+        // also differs from its default and would add a title. The watch must receive the payload
+        // — not only the phone — and from the same payload, so it is not fed by a divergent path.
+        var oneChangedBinding = AppSettings.defaultBindings
+        oneChangedBinding[.power] = .returnKey
+        model.updatePhoneRemoteButtonTitles(
+            bindings: oneChangedBinding,
+            shortcuts: [:],
+            localization: localization
+        )
+        AppLogger.shared.flush()
+        #expect(sink.count(of: "WATCH REMOTE button_titles count=1 buttons=power") == 1)
+        #expect(sink.count(of: "PHONE REMOTE button_titles count=1 buttons=power") == 1)
+
+        // A mapping that matches every default produces no titles, so the watch is handed an
+        // empty payload rather than a stale one. This pins the changed-from-default rule.
+        model.updatePhoneRemoteButtonTitles(
+            bindings: AppSettings.defaultBindings,
+            shortcuts: [:],
+            localization: localization
+        )
+        AppLogger.shared.flush()
+        #expect(sink.count(of: "WATCH REMOTE button_titles count=0 buttons=") == 1)
+    }
+
+    /// The two remaining connection-approval assertions that have no runtime surface, kept as
+    /// source text rather than dropped.
+    ///
+    /// - `connection.phone.cancel_waiting` and `response == .alertThirdButtonReturn`: both belong
+    ///   to the third button of a modal `NSAlert`. Reaching them requires `runModal()`, which
+    ///   would block the suite, and there is no injectable alert presenter in this repository, so
+    ///   they cannot be driven behaviourally without a facility it lacks.
     ///
     /// The neighbouring refusal path — a late approval answered `false` without presenting
     /// anything — is covered behaviourally in
-    /// `nearbyMobileListenersComeUpOnlyFromAUserConnectionEntry`.
-    @Test func connectionApprovalPartsWithoutARuntimeSurfaceStayDeclared() throws {
+    /// `nearbyMobileListenersComeUpOnlyFromAUserConnectionEntry`, and the push of computed titles
+    /// to the watch is covered in `theButtonTitlesTheMacComputesReachTheWatchTransport`.
+    @Test func modalStopWaitingButtonPartsWithoutARuntimeSurfaceStayDeclared() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -329,7 +378,6 @@ struct SettingsPageRegressionTests {
             encoding: .utf8
         )
 
-        #expect(source.contains("watchBluetoothServer.updateButtonTitles(titles)"))
         #expect(source.contains("LocalizedMessage(\"connection.phone.cancel_waiting\")"))
         #expect(source.contains("response == .alertThirdButtonReturn"))
     }

@@ -148,7 +148,7 @@ REMOTE_MIC_SETTINGS_SCREENSHOT_LANGUAGE=zh-Hans \
   - 字号从 10pt 抬到 12pt、11pt 抬到 13pt 会让文字变宽变高，**固定高度容器存在裁切风险**（映射页卡片高度硬编码为 72pt），用例 1 第 4 步是本次最需要人看的一项。
   - 英文授权弹窗文案比中文长，实际弹窗宽度与换行未验证。
   - 用例 3B 依赖截图渲染工具，其结果不等于真实可交互窗口。
-- **已知未解决、需用户决策**：`AGENTS.md:64` 要求在 `800 × 650` 窗口逐一点击侧边栏，但生产 `minSize` 为 `1020 × 772`，该窗口尺寸不可达，门禁按字面无法执行。本次**未改** `AGENTS.md`，也**未改** `minSize`；结论与建议见 [`Bugs/2026-08-21-interface-breaks-the-projects-own-font-and-locale-rules.md`](../Bugs/2026-08-21-interface-breaks-the-projects-own-font-and-locale-rules.md) 的 A9-4 一节。在该项决策前，用例 3A 用生产最小窗口、用例 3B 用截图工具，二者共同替代原门禁措辞。
+- **门禁措辞已解决**：`AGENTS.md:64` 原要求在 `800 × 650` 窗口逐一点击侧边栏，但生产 `minSize` 为 `1020 × 772`，该尺寸不可达、门禁按字面无法执行。该门禁已改为**跟随当前生产 `minSize`**（`a7b5c4d`），`minSize` 本身未改；更窄布局改用离屏渲染（`REMOTE_MIC_SETTINGS_SCREENSHOT_SIZE`）检查并注明为离屏结果。背景与结论见 [`Bugs/2026-08-21-interface-breaks-the-projects-own-font-and-locale-rules.md`](../Bugs/2026-08-21-interface-breaks-the-projects-own-font-and-locale-rules.md) 的 A9-4 一节。用例 3A 用生产最小窗口，用例 3B 用截图工具（离屏），二者共同满足门禁。
 
 ## 自动渲染门禁能证明什么、不能证明什么
 
