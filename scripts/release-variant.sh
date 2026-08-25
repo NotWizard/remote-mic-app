@@ -9,7 +9,8 @@ RELEASE_VARIANT="${RELEASE_VARIANT:-apple-silicon}"
 
 # Fork builds must not point at upstream's appcast: Sparkle would treat upstream's
 # signed release as an update and silently overwrite this fork, discarding every
-# fork change. This fork publishes no appcast asset, so the check fails harmlessly.
+# fork change. This fork publishes its own appcast asset signed with its own
+# EdDSA key, so this host is load-bearing — it is the feed installed copies poll.
 RELEASE_FEED_HOST="${RELEASE_FEED_HOST:-https://github.com/NotWizard/remote-mic-app}"
 
 case "$RELEASE_VARIANT" in
