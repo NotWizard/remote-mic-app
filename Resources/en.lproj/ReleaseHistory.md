@@ -7,6 +7,10 @@
 - **This version stops new duplicate remotes from appearing; one already in your list will not disappear on its own.**
 - **Why this is**: removing a saved remote also removes its own button configuration, which cannot be undone, so the update does not make that decision for you.
 - **What you should do**: if your device list already has an extra "Xiaomi Remote" card, it stays where it is after updating. Don't click it — doing so switches your current button setup to that card's own set, which looks like your configuration was lost.
+- **When you download this by hand, the first launch needs a right-click on the icon and "Open". A plain double-click is blocked.**
+- **Why this is**: this fork has no paid Apple Developer account, so the download carries no Apple signature and has not been through Apple notarisation.
+- **What you should do**: right-click the "Remote Mic" icon the first time, choose "Open", and confirm once in the prompt; double-clicking works normally afterwards. You can also run `xattr -dr com.apple.quarantine "/Applications/Remote Mic.app"` in Terminal first. A Mac managed by your company may refuse to run this kind of app outright.
+- If you are on 1.8.25-fork.4, this version is offered to you automatically. If you are on anything older, including the original project's 1.8.25, one manual download and install is still needed before updates become automatic.
 - Automated tests for the changes in this release pass. **Verification on real hardware is not complete**: whether a brand-new remote shows its model and battery correctly on its first connection has not been confirmed on a real remote.
 
 ## 🐛 Bug fixes
