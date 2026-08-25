@@ -1,5 +1,18 @@
 # Version History
 
+## 1.8.25-fork.5 (this fork)
+
+## ⚠️ Heads-up
+
+- **This version stops new duplicate remotes from appearing; one already in your list will not disappear on its own.**
+- **Why this is**: removing a saved remote also removes its own button configuration, which cannot be undone, so the update does not make that decision for you.
+- **What you should do**: if your device list already has an extra "Xiaomi Remote" card, it stays where it is after updating. Don't click it — doing so switches your current button setup to that card's own set, which looks like your configuration was lost.
+- Automated tests for the changes in this release pass. **Verification on real hardware is not complete**: whether a brand-new remote shows its model and battery correctly on its first connection has not been confirmed on a real remote.
+
+## 🐛 Bug fixes
+
+- Fixed an extra remote card in the connection page that could not be deleted: with any other Xiaomi remote device nearby — even one that never actually connected and isn't the one you use — the device list gained a "Xiaomi Remote" card with no model and no battery, and there was no way to remove it. Only a remote that actually connects and finishes voice initialisation is remembered now.
+
 ## 1.8.25-fork.4 (this fork)
 
 ## ⚠️ Heads-up
