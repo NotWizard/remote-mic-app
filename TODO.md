@@ -57,6 +57,13 @@
   - 已完成：247 项 Swift 测试（新增 3 项）、42 项项目自检、Release 构建、仓库边界检查通过；修复前新增测试无法编译，确认测试依赖本修复。
   - 待完成：真机隔夜休眠重连验收。退避上限 15 秒为日志推断值，真实 HID 枚举耗时未测量。测试手册见 [`Testing/HIDMappingReadinessRetry.md`](Testing/HIDMappingReadinessRetry.md)，缺陷记录见 [`Bugs/2026-08-21-remote-reconnect-loses-custom-button-mapping.md`](Bugs/2026-08-21-remote-reconnect-loses-custom-button-mapping.md)。
 
+- [ ] 修复连接页出现无法删除的幽灵遥控器卡片（待真机验收）
+  - 现场为 `1.8.25-fork.4`，连接页出现两张卡片：真实遥控器「小米蓝牙遥控器 2」与永久存在、无型号无电量的「小米遥控器」。存储中确实是两条持久化档案，第二条 `model=unknown`。语音、按键映射和音频链路均不受影响，但点中幽灵卡片会把当前映射切到那份独立配置，看起来像设置丢失。
+  - 根因：落盘入口不止 `.ready` 一处。`remoteProfileID(for:)` 原本"查不到就建"，而它的三个调用方是电量、型号、电源三个纯读数回调，日志证明这些读数先于 `BLE READY` 到达。于是任何通过名称白名单（含通用名 `MI RC`）、连上并回答一次读取的外设都会立刻留下档案，握手从未完成也一样。型号只在读数回调写入，因此这类档案停在 `unknown` 并退回兜底名；界面又没有任何删除设备档案的入口。
+  - 修复：`remoteProfileID(for:)` 改为纯查询；三个读数回调在档案尚不存在时按 peripheral identifier 暂存到 `pendingRemoteBatteryLevels`/`pendingRemotePowerStates`/`pendingRemoteModels`；`registerBluetoothBridgeIfNeeded` 成为唯一创建点，落盘后由 `applyPendingRemoteTelemetry` 把暂存值补回；暂存表在桥离开就绪状态时清空，读数回调收到 `nil` 时直接作废对应暂存值。未放宽名称白名单，未改动槽位复用语义，未新增删除设备能力。
+  - 已完成：400 项 Swift 测试（新增 4 项、1 个 suite）、42 项项目自检、`swift build -c release`、仓库边界检查通过；三项反向验证各自单独撤掉一处修复，确认只有对应测试变红（其中"查不到就建"的失败信息 `remoteDeviceProfiles.count → 2` 与现场症状同形），并按 sha256 确认源文件逐字节还原。独立审查曾 VETO：暂存机制初版未清空，会把数小时前的电量与型号回放到新建卡片上；该次生缺陷已修复并各有测试。
+  - 待完成：真机验收，重点是 GRP-01（全新遥控器首次连接后型号与电量必须正确显示——本次把这两项的写入推迟到握手完成，是最大回归风险）与 GRP-05（量化已知代价：失败外设不再落盘后不会从发现桥候选中"退休"，可能拖慢真实新遥控器首次配对；代码上已确认不会锁死，实际时长未测量，故刻意不加失败退避）。现存的那条幽灵档案不在本次修复范围内，仍会显示。测试手册见 [`Testing/GhostRemoteProfileGate.md`](Testing/GhostRemoteProfileGate.md)，缺陷记录见 [`Bugs/2026-08-25-ghost-remote-profile-from-unready-peripheral.md`](Bugs/2026-08-25-ghost-remote-profile-from-unready-peripheral.md)。
+
 - [x] 同步上游 v1.8.25 并让本 fork 可独立构建
   - 上游 198 个提交已合并；本分支 4 项改动（可配置语音触发键、遥控器麦克风收音开关、右修饰键卡住修复、自定义快捷键修饰键左右侧修复）全部保留，Swift 源码自动合并无冲突。
   - 上游把私有组件 `GetSayAll/sayall-mac-remote` 声明为无条件依赖，本仓库无访问权限，SwiftPM 解析阶段即失败。已改为指向 [`Vendor/sayall-mac-remote`](Vendor/sayall-mac-remote) 本地 stub，`swift build`、`swift test`（244 项）、`scripts/test.sh`（42 项）和 Release 构建均通过。详见 [`Bugs/2026-08-18-private-mac-remote-package-fork-access.md`](Bugs/2026-08-18-private-mac-remote-package-fork-access.md)。
