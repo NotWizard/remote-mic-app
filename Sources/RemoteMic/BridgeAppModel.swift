@@ -136,7 +136,8 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         AppLogger.shared.write(message)
     })
     private let webRemoteClient = WebRemoteRelayClient()
-    private let voiceFunctionMapper = RemoteVoiceFunctionMapper()
+    private let voiceFunctionMapper: RemoteVoiceFunctionMapper
+    private let hidRuntimePermissions: () -> Bool
     private lazy var voiceInputDestinationCoordinator = VoiceInputDestinationCoordinator(
         onStateChange: { [weak self] state in
             self?.handleVoiceInputDestinationState(state)
@@ -221,6 +222,8 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
     private var hidAllowedLocationIDs: Set<UInt32>?
     private var hidMappingRetryWorkItem: DispatchWorkItem?
     private var hidMappingRetryAttempts = 0
+    /// The voice-key neutralisation the last mapping write used, replayed by a retry.
+    private var lastNeutralizeVoiceKey = false
     /// Whether `startIfNeeded()` has run.
     ///
     /// Internal rather than private so a test can reach the connection entry points, which
@@ -250,8 +253,14 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         settings: AppSettings = AppSettings(),
         initialAudioDevices: [AudioDeviceInfo] = [],
         privateFeature: PrivateFeatureIntegration = PrivateFeatureIntegration(),
-        macroFeature: MacroFeatureIntegration = MacroFeatureIntegration()
+        macroFeature: MacroFeatureIntegration = MacroFeatureIntegration(),
+        voiceFunctionMapper: RemoteVoiceFunctionMapper = RemoteVoiceFunctionMapper(),
+        hidRuntimePermissions: @escaping () -> Bool = {
+            HIDRemoteMonitor.isInputMonitoringGranted && KeyboardInjector.isAccessibilityTrusted
+        }
     ) {
+        self.voiceFunctionMapper = voiceFunctionMapper
+        self.hidRuntimePermissions = hidRuntimePermissions
         self.settings = settings
         self.privateFeature = privateFeature
         self.macroFeature = macroFeature
@@ -1119,7 +1128,12 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         } else {
             scheduleHIDMappingRetryIfNeeded()
         }
-        _ = hidEventSuppressor.start()
+        // Skipped without permission: no monitor can run, so the tap would have nothing to
+        // suppress, and its callback carries an unretained context. A tap still armed after its
+        // owner is freed calls into freed memory.
+        if hidRuntimePermissions() {
+            _ = hidEventSuppressor.start()
+        }
         for profile in settings.remoteDeviceProfiles {
             guard let fingerprint = profile.hidFingerprint else { continue }
             let monitor = makeHIDMonitor(
@@ -1140,6 +1154,50 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         hidMappingRetryWorkItem = nil
     }
 
+    /// Re-runs only the mapping write, then pushes the result into the monitors already running.
+    ///
+    /// Deliberately not `applyHIDSettings()`. That stops and rebuilds every monitor, which
+    /// closes and re-seizes the remote — once per attempt, and the backoff holds at 15 s
+    /// forever, so it is a permanent dropout cycle. It also re-entered `deviceDidMatch` while
+    /// that callback was still on the stack: the monitor it had just dropped went on to seize
+    /// the device, and nothing ever released it, leaving every button dead.
+    ///
+    /// Because nothing restarts, an already-present device is not re-delivered, so repeated
+    /// calls cannot loop and no latch is required.
+    func retryPowerKeyMappingWrite(reason: String) {
+        guard started, settings.customMappingEnabled, !hidPowerKeySuppressed else { return }
+        guard applyVoiceFunctionMapping(neutralizeVoiceKey: lastNeutralizeVoiceKey) else {
+            AppLogger.shared.write("HID MAPPING WRITE pending reason=\(reason)")
+            scheduleHIDMappingRetryIfNeeded()
+            return
+        }
+        hidPowerKeySuppressed = true
+        hidAllowedLocationIDs = voiceFunctionMapper.powerSuppressedLocationIDs
+        hidMappingRetryAttempts = 0
+        cancelHIDMappingRetry()
+        for monitor in hidMonitors.values {
+            monitor.updatePowerKeySuppressed(true, allowedLocationIDs: hidAllowedLocationIDs)
+        }
+        discoveryHIDMonitor?.updatePowerKeySuppressed(
+            true,
+            allowedLocationIDs: hidAllowedLocationIDs
+        )
+        AppLogger.shared.write("HID MAPPING WRITE applied reason=\(reason)")
+    }
+
+    /// The authoritative answer, read from the bridge states rather than from `isConnected`.
+    ///
+    /// `isConnected` is published by `refreshBluetoothPresentation()`, which runs at the *end* of
+    /// `bluetoothBridge(_:didChange:)` — after `applyHIDSettings()` has already run from the
+    /// `.ready` branch. A decision taken during that window sees the previous value, which on a
+    /// reconnect is `false`. That is what silently disabled the retry this policy exists for.
+    private var hasReadyBluetoothBridge: Bool {
+        bluetoothBridgeStates.values.contains { state in
+            if case .ready = state { return true }
+            return false
+        }
+    }
+
     /// The remote's HID service can register after BLE reports ready, so a failed mapping
     /// write is a not-ready-yet state rather than a verdict. Keep re-applying while the
     /// mapping is still wanted and the remote is still connected.
@@ -1149,25 +1207,32 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
             completedAttempts: hidMappingRetryAttempts,
             mappingEnabled: settings.customMappingEnabled,
             mappingApplied: hidPowerKeySuppressed,
-            remoteConnected: isConnected
+            remoteConnected: hasReadyBluetoothBridge
         ) else {
             hidMappingRetryAttempts = 0
             return
         }
         hidMappingRetryAttempts += 1
+        cancelHIDMappingRetry()
+        // The backoff holds at its last delay with no give-up point, which is right for
+        // recovery but would otherwise leave "power button pending" on screen forever. Past the
+        // table the write is not merely late, so say so.
+        if hidMappingRetryAttempts > HIDMappingRetryPolicy.delaysMilliseconds.count {
+            hidStatus = LocalizedMessage("button_mapping.error.power_suppression_failed")
+        }
         AppLogger.shared.write(
             "HID MAPPING RETRY scheduled attempt=\(hidMappingRetryAttempts) delay_ms=\(delay)"
         )
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.hidMappingRetryWorkItem = nil
-            guard self.started, self.settings.customMappingEnabled, self.isConnected else {
+            guard self.started, self.settings.customMappingEnabled, self.hasReadyBluetoothBridge else {
                 AppLogger.shared.write("HID MAPPING RETRY abandoned reason=preconditions_changed")
                 self.hidMappingRetryAttempts = 0
                 return
             }
             AppLogger.shared.write("HID MAPPING RETRY attempt=\(self.hidMappingRetryAttempts)")
-            self.applyHIDSettings()
+            self.retryPowerKeyMappingWrite(reason: "backoff")
         }
         hidMappingRetryWorkItem = workItem
         DispatchQueue.main.asyncAfter(
@@ -1214,6 +1279,7 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
             excludedFingerprints: excludedFingerprints,
             eventSuppressor: hidEventSuppressor,
             ownsEventSuppressor: false,
+            runtimePermissions: hidRuntimePermissions,
             actionPerformer: { [weak self] _, _, configured in
                 self?.performExternalConfiguredAction(configured) ?? false
             },
@@ -1232,6 +1298,9 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
                 ) == true
             }
         )
+        monitor.onDeviceAppeared = { [weak self] in
+            self?.retryPowerKeyMappingWrite(reason: "device_appeared")
+        }
         monitor.onStatus = { [weak self, weak monitor] value in
             guard let self, let monitor else { return }
             if monitor.profileID == self.settings.selectedRemoteProfileID || monitor.profileID == nil {
@@ -1491,10 +1560,7 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
             else { return nil }
             return profileID
         })
-        isConnected = allStates.contains { state in
-            if case .ready = state { return true }
-            return false
-        }
+        isConnected = hasReadyBluetoothBridge
         if let selectedBluetoothBridge,
            let state = bluetoothBridgeStates[ObjectIdentifier(selectedBluetoothBridge)] {
             connectionStatus = state.message
@@ -2526,6 +2592,9 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
 
     @discardableResult
     private func applyVoiceFunctionMapping(neutralizeVoiceKey: Bool) -> Bool {
+        // Recorded so a retry repeats this exact decision. Re-deriving it there would duplicate
+        // the branching in `applyHIDSettings` and let the two drift.
+        lastNeutralizeVoiceKey = neutralizeVoiceKey
         let applied = voiceFunctionMapper.apply(
             suppressPowerKey: settings.customMappingEnabled,
             neutralizeVoiceKey: neutralizeVoiceKey,

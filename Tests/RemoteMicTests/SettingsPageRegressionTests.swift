@@ -118,7 +118,7 @@ struct SettingsPageRegressionTests {
     @Test func nearbyMobileListenersComeUpOnlyFromAUserConnectionEntry() throws {
         let scope = try Self.scopedSettings("nearbyEntry")
         defer { scope.tearDown() }
-        let model = BridgeAppModel(settings: scope.settings)
+        let model = BridgeAppModel(settings: scope.settings, hidRuntimePermissions: { false })
         let sink = LogSink()
         let token = AppLogger.shared.addWriteObserver { sink.record($0) }
         defer { AppLogger.shared.removeWriteObserver(token) }
@@ -219,7 +219,7 @@ struct SettingsPageRegressionTests {
     @Test func oneMobileVoiceSourceOwnsTheChannelAndTheOthersAreRefused() throws {
         let scope = try Self.scopedSettings("voiceIsolation")
         defer { scope.tearDown() }
-        let model = BridgeAppModel(settings: scope.settings)
+        let model = BridgeAppModel(settings: scope.settings, hidRuntimePermissions: { false })
         let sink = LogSink()
         let token = AppLogger.shared.addWriteObserver { sink.record($0) }
         defer { AppLogger.shared.removeWriteObserver(token) }
@@ -323,7 +323,7 @@ struct SettingsPageRegressionTests {
     @Test func theButtonTitlesTheMacComputesReachTheWatchTransport() throws {
         let scope = try Self.scopedSettings("watchButtonTitles")
         defer { scope.tearDown() }
-        let model = BridgeAppModel(settings: scope.settings)
+        let model = BridgeAppModel(settings: scope.settings, hidRuntimePermissions: { false })
         let sink = LogSink()
         let token = AppLogger.shared.addWriteObserver { sink.record($0) }
         defer { AppLogger.shared.removeWriteObserver(token) }

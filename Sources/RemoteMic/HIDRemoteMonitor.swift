@@ -55,6 +55,8 @@ final class HIDRemoteMonitor {
     private let targetFingerprint: String?
     private let excludedFingerprints: () -> Set<String>
     private var allowedLocationIDs: Set<UInt32>?
+    /// False while the remote's power key still performs its native macOS action.
+    private var powerKeySuppressed = false
     private var manager: IOHIDManager?
     private var activeDevice: IOHIDDevice?
     private(set) var deviceFingerprint: String?
@@ -71,6 +73,9 @@ final class HIDRemoteMonitor {
     private var permissionMonitor: HIDRemoteScheduledTask?
     private(set) var status = LocalizedMessage("button_mapping.status.disabled")
     var onStatus: ((LocalizedMessage) -> Void)?
+    /// A matching remote just appeared in IOKit. Fired regardless of whether this monitor
+    /// adopted it, because the mapping write only needs the HID service to exist.
+    var onDeviceAppeared: (() -> Void)?
     var onActiveButtons: ((UUID?, Set<RemoteButton>) -> Void)?
     var onButtonPressed: ((UUID?, String, RemoteButton) -> (profileID: UUID, shouldPerformAction: Bool)?)?
     var onInternalAction: ((UUID?, ButtonAction) -> Void)?
@@ -123,6 +128,15 @@ final class HIDRemoteMonitor {
         self.frontmostBundleIdentifier = frontmostBundleIdentifier
     }
 
+    deinit {
+        // `IOHIDManagerRegisterDeviceMatchingCallback` and friends carry
+        // `Unmanaged.passUnretained(self)`. A manager left scheduled on the run loop after this
+        // object is freed calls into freed memory. Monitors used to bail before creating one
+        // whenever the power-key write had failed; they now open one in that state, which turned
+        // this latent use-after-free into a reproducible crash.
+        stop()
+    }
+
     func assignProfileID(_ profileID: UUID) {
         self.profileID = profileID
     }
@@ -143,6 +157,7 @@ final class HIDRemoteMonitor {
     func start(powerKeySuppressed: Bool, allowedLocationIDs: Set<UInt32>? = nil) {
         stop()
         self.allowedLocationIDs = allowedLocationIDs
+        self.powerKeySuppressed = powerKeySuppressed
         guard settings.customMappingEnabled else {
             updateStatus(LocalizedMessage("button_mapping.status.system_managed"))
             logStartRejected(.mappingDisabled)
@@ -153,22 +168,23 @@ final class HIDRemoteMonitor {
         AppLogger.shared.write(
             "HID PERMISSIONS input=\(inputGranted) accessibility=\(accessibilityGranted)"
         )
-        guard HIDPermissionGate.canMonitor(
+        // `runtimePermissions` is authoritative, not the two statics above. Its default is
+        // exactly `inputGranted && accessibilityGranted`, so nothing changes on a real machine —
+        // but it is also the seam the per-report path already uses, and gating here keeps a
+        // caller that reports no permission from reaching `IOHIDManagerCreate`. The statics only
+        // explain which permission is missing.
+        guard runtimePermissionsAreValid(), HIDPermissionGate.canObserve(
             mappingEnabled: settings.customMappingEnabled,
             inputMonitoringGranted: inputGranted,
-            accessibilityGranted: accessibilityGranted,
-            powerKeySuppressed: powerKeySuppressed
+            accessibilityGranted: accessibilityGranted
         ) else {
             let reason: HIDSuppressionReason
             if !inputGranted {
                 updateStatus(LocalizedMessage("button_mapping.permission.input_monitoring_required"))
                 reason = .inputMonitoringDenied
-            } else if !accessibilityGranted {
+            } else {
                 updateStatus(LocalizedMessage("button_mapping.permission.accessibility_required"))
                 reason = .accessibilityDenied
-            } else {
-                updateStatus(LocalizedMessage("button_mapping.error.power_suppression_failed"))
-                reason = .powerKeyNotSuppressed
             }
             logStartRejected(
                 reason,
@@ -176,6 +192,15 @@ final class HIDRemoteMonitor {
                     "power_suppressed=\(powerKeySuppressed)"
             )
             return
+        }
+
+        // Not a reason to refuse the whole monitor: without the manager open there is no
+        // device-matching callback, and that callback is what lets the mapping write succeed.
+        // Every other button is taken over now; the power button waits, per press.
+        if !powerKeySuppressed {
+            AppLogger.shared.write(
+                "HID START power_key_pending mapping_enabled=\(settings.customMappingEnabled)"
+            )
         }
 
         let suppressionReady = eventSuppressor.start()
@@ -237,7 +262,37 @@ final class HIDRemoteMonitor {
         self.manager = nil
     }
 
+    /// Applies a mapping-write result without restarting.
+    ///
+    /// `start()` would close and re-seize the remote, and the backoff holds at 15 s
+    /// indefinitely — restarting per attempt would be a permanent dropout cycle. It also
+    /// re-enters `deviceDidMatch`, which is how an orphaned monitor ended up holding an
+    /// exclusive open on the device.
+    func updatePowerKeySuppressed(_ value: Bool, allowedLocationIDs: Set<UInt32>?) {
+        powerKeySuppressed = value
+        self.allowedLocationIDs = allowedLocationIDs
+        guard activeDevice != nil else { return }
+        updateStatus(LocalizedMessage(connectedStatusKey))
+    }
+
+    private var connectedStatusKey: String {
+        guard powerKeySuppressed else {
+            return "button_mapping.status.connected_power_key_pending"
+        }
+        if activeDeviceIsSeized { return "button_mapping.status.connected" }
+        return eventSuppressor.isRunning
+            ? "button_mapping.status.connected_fallback"
+            : "button_mapping.status.connected_system_actions_may_remain"
+    }
+
     fileprivate func deviceDidMatch(result: IOReturn, device: IOHIDDevice) {
+        // A callback can still be delivered after `stop()` unscheduled the manager. Adopting
+        // here would seize the device on behalf of a monitor nobody owns any more, and nothing
+        // would ever release it.
+        guard manager != nil else {
+            logDeviceRejected(.monitorNotRunning)
+            return
+        }
         guard result == kIOReturnSuccess else {
             updateStatus(LocalizedMessage("button_mapping.error.device_open_failed"))
             logDeviceRejected(.matchCallbackFailed, detail: "result=\(result)")
@@ -254,6 +309,10 @@ final class HIDRemoteMonitor {
             logDeviceRejected(.fingerprintUnavailable)
             return
         }
+        // Before the adoption guards on purpose: the remote's HID service now exists, which is
+        // the one condition the power-key mapping write was missing. Whether *this* monitor
+        // ends up owning the device is a separate question.
+        onDeviceAppeared?()
         if profileID == nil, targetFingerprint == nil, deviceFingerprint == nil {
             logDeviceRejected(.awaitingReportRouting)
             return
@@ -287,7 +346,7 @@ final class HIDRemoteMonitor {
             activeDevice = device
             deviceFingerprint = fingerprint
             activeDeviceIsSeized = true
-            updateStatus(LocalizedMessage("button_mapping.status.connected"))
+            updateStatus(LocalizedMessage(connectedStatusKey))
             AppLogger.shared.write("HID CONNECTED mode=seized")
             return true
         }
@@ -304,13 +363,7 @@ final class HIDRemoteMonitor {
         activeDevice = device
         deviceFingerprint = fingerprint
         activeDeviceIsSeized = false
-        updateStatus(
-            LocalizedMessage(
-                eventSuppressor.isRunning
-                    ? "button_mapping.status.connected_fallback"
-                    : "button_mapping.status.connected_system_actions_may_remain"
-            )
-        )
+        updateStatus(LocalizedMessage(connectedStatusKey))
         if monitorResult == kIOReturnSuccess {
             AppLogger.shared.write("HID CONNECTED mode=monitored seize_error=\(seizeResult)")
         } else {
@@ -401,6 +454,18 @@ final class HIDRemoteMonitor {
     }
 
     private func process(usages: Set<UInt16>) {
+        // The power usage has to be dropped here, not skipped later: anything that reaches
+        // `activeUsages` also reaches the release path, which arms the event suppressor and
+        // swallows the key-up. Its key-down was deliberately left to macOS, so eating only the
+        // key-up would be worse than doing nothing.
+        var usages = usages
+        if !powerKeySuppressed {
+            let withoutPower = usages.filter { RemoteButton.usageMap[$0] != .power }
+            if withoutPower.count != usages.count {
+                logInputIgnored(.powerKeyNotNeutralized)
+            }
+            usages = withoutPower
+        }
         let pressed = usages.subtracting(activeUsages)
         let released = activeUsages.subtracting(usages)
         activeUsages = usages

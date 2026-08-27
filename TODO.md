@@ -56,6 +56,15 @@
   - 修复：新增纯函数 `HIDMappingRetryPolicy`，在映射开启、已连接、未应用时按 `500/1000/2000/4000/8000/15000` 毫秒退避重跑，超出后维持最后延迟，刻意不设放弃点；只在唯一汇聚点 `startHIDMonitors` 接入，成功归零，`stop`/断连/关闭映射即取消。同时修正 `HID START rejected` 无法区分 `mappingEnabled` 与 `powerKeySuppressed` 的歧义日志。
   - 已完成：247 项 Swift 测试（新增 3 项）、42 项项目自检、Release 构建、仓库边界检查通过；修复前新增测试无法编译，确认测试依赖本修复。
   - 待完成：真机隔夜休眠重连验收。退避上限 15 秒为日志推断值，真实 HID 枚举耗时未测量。测试手册见 [`Testing/HIDMappingReadinessRetry.md`](Testing/HIDMappingReadinessRetry.md)，缺陷记录见 [`Bugs/2026-08-21-remote-reconnect-loses-custom-button-mapping.md`](Bugs/2026-08-21-remote-reconnect-loses-custom-button-mapping.md)。
+  - **2026-08-27 更正：本条修复实际上是死代码，从未执行过一次。** 重试判定读了尚未刷新的 `isConnected`，重连时该值为 `false`，于是判定「设备没连着，不用重试」。同一症状在 `1.8.25-fork.5` 再次现场复现，日志中一条 `HID MAPPING RETRY` 都没有。根治见下一条。
+
+- [ ] 打破 HID 接管的循环依赖，让按键接管在重连后自行恢复（待真机验收）
+  - 现场为 `1.8.25-fork.5 (124)`，与上一条同症状：长时间闲置重连后全部自定义按键退回原生行为，重启 App 才恢复。
+  - 根因两层。一是上一条那个陈旧读取，使唯一的兜底重试从未排程。二是循环依赖：`HIDRemoteMonitor.start()` 要求开关机键已接管才会创建 IOHIDManager 并注册「设备出现」回调，而开关机键能否接管取决于 HID 服务是否已注册——唯一能告知「已注册」的事件，被一道要求它已注册的门挡住了，只剩轮询。此外影响范围本身是错的：一个只涉及开关机键的失败连带禁用了全部按键。
+  - 修复：新增 `HIDPermissionGate.canObserve`（不含开关机键接管结果）作为开 manager 的门禁；`deviceDidMatch` 在采纳门禁之前触发新的 `onDeviceAppeared`，由 `retryPowerKeyMappingWrite` 在该时刻**只重跑映射写入**并就地更新已在运行的监听器（不重启任何东西，因此不会重新投递设备、不会重入、不需要 latch）；`process(usages:)` 在未接管前把 power usage 在进入 `activeUsages` 之前就滤除，避免按下走原生而松开被吞；退避到顶后改用「无法安全接管」文案，不再永久显示「仍在接管中」；给 `HIDRemoteMonitor` 补 `deinit { stop() }`；新增计算属性 `hasReadyBluetoothBridge` 作为连接状态唯一定义，修活退避兜底；新增 `connected_power_key_pending` 状态文案。
+  - 已完成：404 项 Swift 测试（新增 4 项、1 个 suite）、42 项项目自检、`swift build -c release`、仓库边界检查通过。独立审查 VETO 了初版并全部成立：初版「设备出现后重跑 `applyHIDSettings`」会销毁正在栈上的监听器，那个已死对象继续独占设备且永不释放（全部按键彻底失灵，比原 Bug 更糟），且退避到顶后每 15 秒重复一次。改为 narrow write 后一并消除。另外初版把开关机键的 key-up 吞掉、让永久失败状态不可见、并弱化了一条测试断言，均已改正。
+  - 改动一度让 `swift test` 间歇崩溃（EXC_BAD_ACCESS）。从崩溃报告取栈定位为悬空 CGEvent tap（唯一调 `start()` 的测试声明不拥有抑制器却不停它）；处置为该测试改为拥有、`BridgeAppModel` 新增可注入 `hidRuntimePermissions` 并透传给监听器、共享 tap 也受同一探测约束。稳定性实测：改动前 3/3 通过，初版 1/5，最终 8/8。
+  - 待完成：真机验收。**最关键的未验证假设**是「`deviceDidMatch` 触发那一刻服务枚举一定 `matched>0`」——整个修复建立在此，且完全未经真机检验；其次是开关机键在待接管窗口内既不执行自定义动作也不休眠（TR-02）。测试手册见 [`Testing/HIDTakeoverRecoveryAfterIdle.md`](Testing/HIDTakeoverRecoveryAfterIdle.md)，缺陷记录见 [`Bugs/2026-08-27-hid-takeover-dead-retry-and-circular-dependency.md`](Bugs/2026-08-27-hid-takeover-dead-retry-and-circular-dependency.md)。
 
 - [ ] 修复连接页出现无法删除的幽灵遥控器卡片（待真机验收）
   - 现场为 `1.8.25-fork.4`，连接页出现两张卡片：真实遥控器「小米蓝牙遥控器 2」与永久存在、无型号无电量的「小米遥控器」。存储中确实是两条持久化档案，第二条 `model=unknown`。语音、按键映射和音频链路均不受影响，但点中幽灵卡片会把当前映射切到那份独立配置，看起来像设置丢失。

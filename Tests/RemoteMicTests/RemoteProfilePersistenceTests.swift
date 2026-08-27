@@ -54,7 +54,7 @@ struct RemoteProfilePersistenceTests {
         let scope = try Self.scopedSettings("ghost")
         defer { scope.tearDown() }
         let settings = scope.settings
-        let model = BridgeAppModel(settings: settings)
+        let model = BridgeAppModel(settings: settings, hidRuntimePermissions: { false })
         let realRemote = UUID()
         let strayAdvertiser = UUID()
 
@@ -85,7 +85,7 @@ struct RemoteProfilePersistenceTests {
         let scope = try Self.scopedSettings("ready")
         defer { scope.tearDown() }
         let settings = scope.settings
-        let model = BridgeAppModel(settings: settings)
+        let model = BridgeAppModel(settings: settings, hidRuntimePermissions: { false })
         let firstRemote = UUID()
         let secondRemote = UUID()
 
@@ -120,7 +120,7 @@ struct RemoteProfilePersistenceTests {
         let scope = try Self.scopedSettings("stale")
         defer { scope.tearDown() }
         let settings = scope.settings
-        let model = BridgeAppModel(settings: settings)
+        let model = BridgeAppModel(settings: settings, hidRuntimePermissions: { false })
         let firstRemote = UUID()
         let lateRemote = UUID()
 
@@ -147,7 +147,7 @@ struct RemoteProfilePersistenceTests {
         let scope = try Self.scopedSettings("invalidate")
         defer { scope.tearDown() }
         let settings = scope.settings
-        let model = BridgeAppModel(settings: settings)
+        let model = BridgeAppModel(settings: settings, hidRuntimePermissions: { false })
         let firstRemote = UUID()
         let secondRemote = UUID()
 

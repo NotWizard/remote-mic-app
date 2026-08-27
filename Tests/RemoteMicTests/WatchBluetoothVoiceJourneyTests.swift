@@ -55,7 +55,7 @@ struct WatchBluetoothVoiceJourneyTests {
         let suiteName = "WatchBluetoothVoiceJourneyTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let model = BridgeAppModel(settings: AppSettings(defaults: defaults))
+        let model = BridgeAppModel(settings: AppSettings(defaults: defaults), hidRuntimePermissions: { false })
         let sink = LogSink()
         let token = AppLogger.shared.addWriteObserver { sink.record($0) }
         defer { AppLogger.shared.removeWriteObserver(token) }

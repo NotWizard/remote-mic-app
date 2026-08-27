@@ -362,7 +362,7 @@ struct RuntimeLogGovernanceTests {
         let settings = AppSettings(defaults: defaults)
         #expect(settings.selectedAudioDeviceUID.isEmpty)
 
-        let model = BridgeAppModel(settings: settings)
+        let model = BridgeAppModel(settings: settings, hidRuntimePermissions: { false })
         let firstReason = "gate_probe_first_\(UUID().uuidString)"
         let secondReason = "gate_probe_second_\(UUID().uuidString)"
 

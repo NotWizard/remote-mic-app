@@ -57,7 +57,7 @@ struct TestToneTests {
 
     @MainActor
     @Test func productionModelRejectsTestToneWithoutAReadyDevice() {
-        let model = BridgeAppModel()
+        let model = BridgeAppModel(hidRuntimePermissions: { false })
         #expect(!model.canSendTestTone)
 
         model.sendTestTone()

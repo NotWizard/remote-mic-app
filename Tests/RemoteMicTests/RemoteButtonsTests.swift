@@ -1153,29 +1153,25 @@ struct RemoteButtonsTests {
     }
 
     @Test func HIDPermissionGateFailsClosed() {
-        #expect(!HIDPermissionGate.canMonitor(
+        #expect(!HIDPermissionGate.canObserve(
             mappingEnabled: true,
             inputMonitoringGranted: false,
-            accessibilityGranted: true,
-            powerKeySuppressed: true
+            accessibilityGranted: true
         ))
-        #expect(!HIDPermissionGate.canMonitor(
+        #expect(!HIDPermissionGate.canObserve(
             mappingEnabled: true,
             inputMonitoringGranted: true,
-            accessibilityGranted: false,
-            powerKeySuppressed: true
+            accessibilityGranted: false
         ))
-        #expect(!HIDPermissionGate.canMonitor(
+        #expect(!HIDPermissionGate.canObserve(
+            mappingEnabled: false,
+            inputMonitoringGranted: true,
+            accessibilityGranted: true
+        ))
+        #expect(HIDPermissionGate.canObserve(
             mappingEnabled: true,
             inputMonitoringGranted: true,
-            accessibilityGranted: true,
-            powerKeySuppressed: false
-        ))
-        #expect(HIDPermissionGate.canMonitor(
-            mappingEnabled: true,
-            inputMonitoringGranted: true,
-            accessibilityGranted: true,
-            powerKeySuppressed: true
+            accessibilityGranted: true
         ))
     }
 
@@ -2409,7 +2405,11 @@ struct RemoteButtonsTests {
 
         let monitor = HIDRemoteMonitor(
             settings: settings,
-            ownsEventSuppressor: false,
+            // Owned on purpose: this is the only test that calls `start()`, which now proceeds
+            // past an unneutralised power key and therefore arms a real CGEvent tap. Unowned,
+            // `stop()` would leave it armed with an unretained callback context, and a later test
+            // that runs a real run loop would crash on it.
+            ownsEventSuppressor: true,
             runtimePermissions: { true }
         )
 
@@ -2420,22 +2420,31 @@ struct RemoteButtonsTests {
         let disabledReasons = sink.startRejectionReasons
         #expect(disabledReasons.contains(HIDSuppressionReason.mappingDisabled.rawValue))
 
-        // Branch 2: mapping is on but the gate refuses. Whichever of the three gate causes
-        // applies on this machine, it must be named, and it must not be mistakable for
-        // branch 1 — that indistinguishability is the defect.
+        // Branch 2: mapping is on and the power key has not been neutralised. This must never be
+        // silent — but it must also no longer stop the monitor. Opening the manager is what
+        // delivers the device-matching callback, and that callback is the only reliable signal
+        // that the mapping write can succeed; refusing here made the signal unreachable.
+        //
+        // Permissions are read from the host machine, so either outcome is legitimate: refused
+        // for a *permission* reason, or proceeding with the power key pending. Neither may be
+        // silent, and neither may be mistakable for branch 1.
         sink.reset()
         settings.customMappingEnabled = true
         monitor.start(powerKeySuppressed: false)
         AppLogger.shared.flush()
         let gatedReasons = sink.startRejectionReasons
-        #expect(!gatedReasons.isEmpty)
         #expect(!gatedReasons.contains(HIDSuppressionReason.mappingDisabled.rawValue))
-        let gateCauses: Set<String> = [
+        let permissionCauses: Set<String> = [
             HIDSuppressionReason.inputMonitoringDenied.rawValue,
             HIDSuppressionReason.accessibilityDenied.rawValue,
-            HIDSuppressionReason.powerKeyNotSuppressed.rawValue,
         ]
-        #expect(gatedReasons.isSubset(of: gateCauses))
+        let refusedForPermissions = !gatedReasons.isEmpty
+            && gatedReasons.isSubset(of: permissionCauses)
+        let announcedPending = sink.lines.contains {
+            $0.hasPrefix("HID START power_key_pending")
+        }
+        // Exactly one of the two, so neither silence nor both can pass.
+        #expect(refusedForPermissions != announcedPending)
         monitor.stop()
     }
 

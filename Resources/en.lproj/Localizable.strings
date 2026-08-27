@@ -40,6 +40,7 @@
 "button_mapping.error.power_suppression_failed" = "Unable to safely override the remote power button";
 "button_mapping.status.connected_fallback" = "Button controls connected";
 "button_mapping.status.connected_system_actions_may_remain" = "Button controls connected; some original system actions may still occur";
+"button_mapping.status.connected_power_key_pending" = "Button controls connected; power button takeover pending";
 "button_mapping.status.disconnected" = "Remote buttons disconnected";
 "button_mapping.permission.accessibility_expired" = "Accessibility permission expired; the remote was released";
 "button_mapping.permission.system_expired" = "System permissions expired; the remote was released";

@@ -40,6 +40,7 @@
 "button_mapping.error.power_suppression_failed" = "无法安全接管遥控器开关机键";
 "button_mapping.status.connected_fallback" = "按键功能已连接";
 "button_mapping.status.connected_system_actions_may_remain" = "按键功能已连接；部分系统原操作可能仍会触发";
+"button_mapping.status.connected_power_key_pending" = "按键功能已连接；开关机键仍在接管中";
 "button_mapping.status.disconnected" = "遥控器按键已断开";
 "button_mapping.permission.accessibility_expired" = "辅助功能权限已失效；已释放遥控器";
 "button_mapping.permission.system_expired" = "系统权限已失效；已释放遥控器";

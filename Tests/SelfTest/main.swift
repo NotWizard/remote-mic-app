@@ -220,29 +220,25 @@ check(
     "native duplicate-event descriptors"
 )
 check(
-    !HIDPermissionGate.canMonitor(
+    !HIDPermissionGate.canObserve(
         mappingEnabled: true,
         inputMonitoringGranted: false,
-        accessibilityGranted: true,
-        powerKeySuppressed: true
+        accessibilityGranted: true
     ) &&
-        !HIDPermissionGate.canMonitor(
+        !HIDPermissionGate.canObserve(
             mappingEnabled: true,
             inputMonitoringGranted: true,
-            accessibilityGranted: false,
-            powerKeySuppressed: true
+            accessibilityGranted: false
         ) &&
-        !HIDPermissionGate.canMonitor(
-            mappingEnabled: true,
+        !HIDPermissionGate.canObserve(
+            mappingEnabled: false,
             inputMonitoringGranted: true,
-            accessibilityGranted: true,
-            powerKeySuppressed: false
+            accessibilityGranted: true
         ) &&
-        HIDPermissionGate.canMonitor(
+        HIDPermissionGate.canObserve(
             mappingEnabled: true,
             inputMonitoringGranted: true,
-            accessibilityGranted: true,
-            powerKeySuppressed: true
+            accessibilityGranted: true
         ),
     "HID permission gate fails closed"
 )

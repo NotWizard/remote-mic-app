@@ -67,7 +67,7 @@ struct BridgeAppModelIsolationTests {
     @Test func webSessionStateFromTheTransportIsPublishedOnALaterMainActorTurn() async throws {
         let scope = try Self.scopedSettings("webState")
         defer { scope.tearDown() }
-        let model = BridgeAppModel(settings: scope.settings)
+        let model = BridgeAppModel(settings: scope.settings, hidRuntimePermissions: { false })
         let recorder = PublishRecorder()
         let subscription = model.objectWillChange.sink { _ in
             recorder.record(isMainThread: Thread.isMainThread)
@@ -103,7 +103,7 @@ struct BridgeAppModelIsolationTests {
         let scope = try Self.scopedSettings("hop")
         defer { scope.tearDown() }
         let recorder = PublishRecorder()
-        let model = await MainActor.run { BridgeAppModel(settings: scope.settings) }
+        let model = await MainActor.run { BridgeAppModel(settings: scope.settings, hidRuntimePermissions: { false }) }
         let subscription = await MainActor.run {
             model.objectWillChange.sink { _ in
                 recorder.record(isMainThread: Thread.isMainThread)

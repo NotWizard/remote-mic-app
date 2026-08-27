@@ -705,13 +705,19 @@ enum RemoteHIDReportParser {
 }
 
 enum HIDPermissionGate {
-    static func canMonitor(
+    /// Whether the monitor may open the IOHID manager and watch for the remote appearing.
+    ///
+    /// Deliberately does NOT consider `powerKeySuppressed`. That flag is the result of writing
+    /// the remote's HID mapping, which can only succeed once the remote's HID service is
+    /// registered — and the manager's device-matching callback is the only reliable signal that
+    /// it is. Gating the manager on it made the doorbell impossible to install until the guest
+    /// had already arrived, leaving a polling timer as the sole recovery path.
+    static func canObserve(
         mappingEnabled: Bool,
         inputMonitoringGranted: Bool,
-        accessibilityGranted: Bool,
-        powerKeySuppressed: Bool
+        accessibilityGranted: Bool
     ) -> Bool {
-        mappingEnabled && inputMonitoringGranted && accessibilityGranted && powerKeySuppressed
+        mappingEnabled && inputMonitoringGranted && accessibilityGranted
     }
 
     static func nextPermissionRequest(
@@ -797,6 +803,9 @@ enum HIDSuppressionReason: String, CaseIterable {
     case profileUnresolved = "profile_unresolved"
     case routingDeclined = "routing_declined"
     case duplicatePressDebounced = "duplicate_press_debounced"
+    /// The power button, while its native behaviour is still live. Acting would fire the
+    /// configured action *and* let macOS sleep or lock the Mac.
+    case powerKeyNotNeutralized = "power_key_not_neutralized"
 
     // `performConfiguredAction()` — the action was dispatched and refused.
     case actionInjectionRejected = "action_injection_rejected"
