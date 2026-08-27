@@ -1,5 +1,17 @@
 # Version History
 
+## 1.8.25-fork.6 (this fork)
+
+## ⚠️ Heads-up
+
+- If you are on 1.8.25-fork.5, this version is offered to you automatically — no manual download. When downloading by hand, the first launch still needs a right-click on the icon and "Open" (this fork has no paid Apple signature and is not notarised).
+- Automated tests and an on-machine log comparison for both fixes pass, but **verification on real hardware is not complete**: button recovery after a real overnight reconnect, and behaviour when audio devices are physically plugged or unplugged, still need your confirmation in everyday use.
+
+## 🐛 Bug fixes
+
+- Fixed custom buttons failing after the remote had been idle a long time and reconnected, falling back to their native macOS meanings until the app was restarted. Buttons now recover on their own once the remote is ready; the power button keeps its original behaviour briefly until fully taken over, while every other button works immediately.
+- Fixed the app rebinding the audio device over and over in the background while idle, after the remote microphone was chosen as output. It did not affect the sound you hear, but it kept using CPU and battery and churned through the diagnostic log.
+
 ## 1.8.25-fork.5 (this fork)
 
 ## ⚠️ Heads-up
