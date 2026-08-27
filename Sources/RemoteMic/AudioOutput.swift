@@ -10,6 +10,27 @@ struct AudioDeviceInfo: Identifiable, Equatable {
     let name: String
 }
 
+/// Whether an `AVAudioEngineConfigurationChange` is worth recovering from.
+///
+/// The notification also fires for changes this app makes itself — reconfiguring the engine emits
+/// one — so "still pointed at the device we selected" means there is nothing to recover.
+///
+/// The check used to additionally require the engine to be *running*. That made the suppression
+/// unavailable exactly while idle, which is when the self-inflicted changes happen and when there
+/// is nothing to fix: each change scheduled a recovery, whose own rebind emitted the next change.
+/// A field log showed the resulting loop running about once a second indefinitely, rotating a 4 MB
+/// runtime log every 20 minutes and taking real diagnostic history with it. Whether audio happens
+/// to be flowing is not evidence about the binding.
+enum AudioEngineConfigurationChangePolicy {
+    static func needsRecovery(
+        selectedDeviceID: AudioDeviceID?,
+        currentOutputDeviceID: AudioDeviceID?
+    ) -> Bool {
+        guard let selectedDeviceID, let currentOutputDeviceID else { return true }
+        return selectedDeviceID != currentOutputDeviceID
+    }
+}
+
 enum AudioPlayerNodeSafety {
     static func play(_ player: AVAudioPlayerNode) -> Bool {
         RemoteMicTryPlayAudioPlayerNode(player)
@@ -595,9 +616,10 @@ final class VirtualAudioOutput {
                   self.engine === engine,
                   self.engineConfigurationGeneration == generation
             else { return }
-            if self.isReadyForTestTone,
-               let selectedDevice = self.selectedDevice,
-               self.currentOutputDevice()?.id == selectedDevice.id {
+            guard AudioEngineConfigurationChangePolicy.needsRecovery(
+                selectedDeviceID: self.selectedDevice?.id,
+                currentOutputDeviceID: self.currentOutputDevice()?.id
+            ) else {
                 AppLogger.shared.write(
                     "AUDIO ENGINE configuration_ignored generation=\(generation) reason=still_bound"
                 )

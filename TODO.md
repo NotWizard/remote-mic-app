@@ -43,6 +43,13 @@
 **已决（版本级别）**：用户已确认保留 `1.8.25-fork.4`（fork 补丁级）并选择了三个关键词「信任到期、语音键、字号」。`Release_Notes_Guidelines.md` 末尾检查清单的「版本号级别与内容相符」项在此放行——fork 补丁序号在本仓库不对应公共 semver 约定，用户知情后已落地，不再视为未通过。
 
 
+- [ ] 修复空闲时音频引擎每秒自我重绑的循环（待真机验收部分项）
+  - 现场为 `1.8.25-fork.5 (124)`，选中 `MiRemoteV 2ch` 后空闲即触发：约每 1.2 秒一次 `AUDIO RECOVERY ... engine_configuration_change`，日志每 20 分钟写满 4MB 轮转，把有用历史冲掉。声音不受影响（全程 `engine_running=false`、`bound_to_selected=true`），但持续耗 CPU 与电。
+  - 根因：抑制该循环的门禁要求 `isReadyForTestTone`（含 `engine.isRunning`），使抑制在引擎空闲时不可用——而循环恰好发生在空闲时。于是每一次「重绑自己造成的配置变化」都被当成真实硬件变化去恢复，恢复又造成下一次变化。判据拿错了：`engine.isRunning` 证明音频在流动，不证明绑定正确。
+  - 修复：抽出 `AudioEngineConfigurationChangePolicy.needsRecovery`，只比较选定设备与引擎当前输出设备的 id，相等即忽略、任一为 nil 朝恢复方向失败；通知回调改走该策略。`isReadyForTestTone` 保留用于测试音门禁，不再参与本判定。
+  - 已完成：409 项 Swift 测试（新增 5 项、1 个 suite）、42 项项目自检、`swift build -c release`、仓库边界检查通过。**真机对比（决定性）**：同机修复前 3 分钟约 144 次重绑、修复后 0 次，`configuration_ignored` 各出现表明自造变化被正确忽略，且同窗口内语音/HID/BLE/AUDIO READY 正常。
+  - 待完成：AC-02 真实拔插外接设备后恢复是否仍及时（本次改动主要回归风险，代理只测了稳态空闲）、AC-03 语音播放中、AC-04 长时间运行。通知回调本身的接线无注入点、未被单测覆盖，仅由真机对比证明。测试手册见 [`Testing/AudioConfigurationChangeRecovery.md`](Testing/AudioConfigurationChangeRecovery.md)，缺陷记录见 [`Bugs/2026-08-27-idle-audio-rebind-loop.md`](Bugs/2026-08-27-idle-audio-rebind-loop.md)。
+
 - [ ] 拆分安装制品，修复 pkg 删除已安装 App（待真机验收）
   - `v1.8.25-fork.2` 的 DMG 会因 macOS bundle relocation 把安装目标改写到 Launch Services 记录的旧路径，删除用户正在使用的 `/Applications/Remote Mic.app`，随后 `postinstall` 因目标不存在而失败（Code=112）。用户偏好被新版按全新安装重写。该 DMG 资产已从 Release 撤下并加了警告。
   - 根因：`pkgbuild --root` 未传 `--component-plist`，app bundle 的 `BundleIsRelocatable` 默认为真，而 payload 里同时含 App 与驱动。任何把 App 放在非 `/Applications` 位置的用户都会触发，不限开发机。
