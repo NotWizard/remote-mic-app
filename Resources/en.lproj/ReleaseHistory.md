@@ -1,5 +1,17 @@
 # Version History
 
+## 1.8.25-fork.7 (this fork)
+
+## ⚠️ Heads-up
+
+- **If you are on 1.8.25-fork.6, update to this version promptly.** On that version, after the remote reconnected, pressing the voice key could switch on macOS VoiceOver, after which the Mac became slow and mouse clicks no longer switched windows.
+- **If you have already hit it**: quit this app first (the slowness lifts immediately), press `Command + F5` once to turn VoiceOver off (or use System Settings → Accessibility → VoiceOver), then press left and right Command, Control, Option and Shift once each to release any modifier left held.
+- Automated tests for this fix pass, but **verification on real hardware is not complete**.
+
+## 🐛 Bug fixes
+
+- Fixed the voice key switching on macOS VoiceOver after the remote reconnected, and leaving a modifier key held so the Mac felt slow and mouse clicks stopped switching windows. The remote's voice key was not being masked properly, so one key ended up with two sources.
+
 ## 1.8.25-fork.6 (this fork)
 
 ## ⚠️ Heads-up
