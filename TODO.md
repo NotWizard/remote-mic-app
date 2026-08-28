@@ -43,6 +43,13 @@
 **已决（版本级别）**：用户已确认保留 `1.8.25-fork.4`（fork 补丁级）并选择了三个关键词「信任到期、语音键、字号」。`Release_Notes_Guidelines.md` 末尾检查清单的「版本号级别与内容相符」项在此放行——fork 补丁序号在本仓库不对应公共 semver 约定，用户知情后已落地，不再视为未通过。
 
 
+- [ ] 修复语音键触发旁白、修饰键卡住、系统卡顿（`1.8.25-fork.6` 回归，待真机验收）
+  - 现场为 `1.8.25-fork.6 (125)`，触发键为右 Command：重连后按语音键会开启 macOS 旁白，之后系统卡顿、鼠标点击无法切换窗口。**这是上一条修复引入的回归。**
+  - 根因：遥控器语音键硬件上是 F5。修饰键注入模式必须把它映射成 usage 0（彻底丢弃），使修饰键只有一个来源；降级映射则把 F5 改写成触发键本身，于是右 Command 有两个来源、两条释放路径，一侧悬空即卡住（代码注释原本就写明要避免这一点），而 F5 与 Cmd 同时到达即触发旁白。末态停在降级映射的原因有两层：`applyHIDSettings` 的降级判据 `!isVoiceKeyNeutralized` 把「设备不在」与「设备在但写不成」混为一谈（既有缺陷）；而新加的重试用 `lastNeutralizeVoiceKey` 重放上次尝试值，失败的 apply 恰以降级尝试收尾，于是第一次写成功就把降级永久化。
+  - 修复：`RemoteVoiceFunctionMapper` 新增 `didReachDevice`（刻意在 rollback 中存活，只有 `matched=0` 才清零）；抽出 `writeVoiceFunctionMapping()` 作为写入决策唯一定义，`applyHIDSettings` 与重试共用，删除 `lastNeutralizeVoiceKey`；降级仅在确实碰到设备时进行，否则保持原样交由重试继续以「丢弃 F5」为目标。
+  - 已完成：412 项 Swift 测试（新增 3 项）、42 项自检、`swift build -c release`、边界检查通过，全量连续 3 次全绿。反向验证：去掉 `didReachDevice` 守卫后回归测试立即变红且失败信息 `isVoiceKeyNeutralized → false`、实际写入降级映射，与现场 `neutralized=false` 同形，随后 sha256 确认逐字节还原。一并删除了 `powerSuppressionIsArmedBeforeButtonCallbacksAndMonitoring` 中切片源码文本比较片段位置的那一半，同一不变量改为观测日志顺序的行为断言。
+  - 待完成：真机确认旁白不再被触发、右 Command 不再卡住（TR-07）；以及硬件确实拒绝中性映射时降级仍如期发生。测试手册见 [`Testing/HIDTakeoverRecoveryAfterIdle.md`](Testing/HIDTakeoverRecoveryAfterIdle.md) TR-07，缺陷记录见 [`Bugs/2026-08-28-voice-key-fallback-triggered-voiceover-and-stuck-modifier.md`](Bugs/2026-08-28-voice-key-fallback-triggered-voiceover-and-stuck-modifier.md)。
+
 - [ ] 修复空闲时音频引擎每秒自我重绑的循环（待真机验收部分项）
   - 现场为 `1.8.25-fork.5 (124)`，选中 `MiRemoteV 2ch` 后空闲即触发：约每 1.2 秒一次 `AUDIO RECOVERY ... engine_configuration_change`，日志每 20 分钟写满 4MB 轮转，把有用历史冲掉。声音不受影响（全程 `engine_running=false`、`bound_to_selected=true`），但持续耗 CPU 与电。
   - 根因：抑制该循环的门禁要求 `isReadyForTestTone`（含 `engine.isRunning`），使抑制在引擎空闲时不可用——而循环恰好发生在空闲时。于是每一次「重绑自己造成的配置变化」都被当成真实硬件变化去恢复，恢复又造成下一次变化。判据拿错了：`engine.isRunning` 证明音频在流动，不证明绑定正确。

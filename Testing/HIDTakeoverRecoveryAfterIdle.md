@@ -97,6 +97,29 @@ grep -c "HID MAPPING RETRY attempt=" ~/Library/Logs/RemoteMic/runtime.log
 
 失败判定：任一计数持续增长不停；或日志文件在几分钟内暴涨（4MB 级轮转）。
 
+### TR-07 语音键必须落在「已废掉」状态，不得触发旁白或卡住修饰键（fork.6 回归）
+
+`1.8.25-fork.6` 上出现过：重连后语音键最终停在降级映射（F5 被改写成触发键本身），导致按语音键开启 macOS 旁白，并让右 Command 卡住、鼠标点击全部变成 Command+点击。
+
+1. 制造一次重连（最好是 TR-01 那种出现过 `matched=0` 的重连）。
+2. 等日志出现 `matched=1`，检查该行的 `neutralized` 字段：
+
+```
+grep "VOICE FN MAPPING" ~/Library/Logs/RemoteMic/runtime.log | tail -3
+```
+
+3. 按住语音键说一句话，松开。
+
+预期：
+
+- 最后一条 `VOICE FN MAPPING ... matched=1` 的 **`neutralized=true`**；
+- 旁白**不被**开启；
+- 松开后鼠标点击正常，能正常切换窗口（没有卡住的 Command）。
+
+失败判定：末态 `neutralized=false`；或旁白被开启；或松开后点击行为异常。任一命中都必须立即停止发布。
+
+> 若你的遥控器硬件确实不接受中性映射，`neutralized=false` 是合理结果——但那种情况下按语音键也不应开启旁白。若出现旁白，无论 `neutralized` 是什么，都算失败。
+
 ## 稳定功能回归
 
 TR-01 完成后各做一次：

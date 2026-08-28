@@ -222,8 +222,6 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
     private var hidAllowedLocationIDs: Set<UInt32>?
     private var hidMappingRetryWorkItem: DispatchWorkItem?
     private var hidMappingRetryAttempts = 0
-    /// The voice-key neutralisation the last mapping write used, replayed by a retry.
-    private var lastNeutralizeVoiceKey = false
     /// Whether `startIfNeeded()` has run.
     ///
     /// Internal rather than private so a test can reach the connection entry points, which
@@ -1086,29 +1084,51 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         requestNextHIDPermissionIfNeeded(
             voiceFnTapModeRequested: wantsFnTap || wantsModifierInjection
         )
-        var powerKeySuppressed: Bool
+        startHIDMonitors(powerKeySuppressed: writeVoiceFunctionMapping())
+    }
+
+    /// Writes the voice-key and power-key mapping, and reports whether the power key ended up
+    /// suppressed. The single definition of that decision: the retry path calls it too, and when
+    /// the retry re-derived the choice separately the two drifted into shipping the fallback.
+    private func writeVoiceFunctionMapping() -> Bool {
+        let trigger = settings.voiceTriggerKey
+        let wantsFnTap = VoiceKeyModePolicy.usesFnTapInjection(
+            fnTapEnabled: settings.voiceFnTapModeEnabled,
+            usesRemoteMicrophone: settings.voiceKeyUsesRemoteMicrophone,
+            trigger: trigger
+        )
+        let wantsModifierInjection = VoiceKeyModePolicy.usesModifierHoldInjection(trigger: trigger)
         if wantsFnTap, !KeyboardInjector.isAccessibilityTrusted {
             // Fn-tap needs Accessibility; without it fall back to the hardware Fn hold.
             settings.voiceFnTapModeEnabled = false
             voiceFnTapSession.setEnabled(false)
-            powerKeySuppressed = applyVoiceFunctionMapping(neutralizeVoiceKey: false)
-        } else if wantsFnTap || wantsModifierInjection {
-            // Injection modes neutralize the hardware F5 so it never emits on its own;
-            // a modifier trigger is then injected as a held key tied to the ATVV stream
-            // and Fn-tap injects taps. This avoids a stuck hardware-remapped modifier.
-            powerKeySuppressed = applyVoiceFunctionMapping(neutralizeVoiceKey: true)
-            if voiceFunctionMapper.isVoiceKeyNeutralized {
-                voiceFnTapSession.setEnabled(wantsFnTap)
-            } else {
-                settings.voiceFnTapModeEnabled = false
-                voiceFnTapSession.setEnabled(false)
-                powerKeySuppressed = applyVoiceFunctionMapping(neutralizeVoiceKey: false)
-            }
-        } else {
-            voiceFnTapSession.setEnabled(false)
-            powerKeySuppressed = applyVoiceFunctionMapping(neutralizeVoiceKey: false)
+            return applyVoiceFunctionMapping(neutralizeVoiceKey: false)
         }
-        startHIDMonitors(powerKeySuppressed: powerKeySuppressed)
+        guard wantsFnTap || wantsModifierInjection else {
+            voiceFnTapSession.setEnabled(false)
+            return applyVoiceFunctionMapping(neutralizeVoiceKey: false)
+        }
+        // Injection modes neutralize the hardware F5 so it never emits on its own;
+        // a modifier trigger is then injected as a held key tied to the ATVV stream
+        // and Fn-tap injects taps. This avoids a stuck hardware-remapped modifier.
+        let powerKeySuppressed = applyVoiceFunctionMapping(neutralizeVoiceKey: true)
+        if voiceFunctionMapper.isVoiceKeyNeutralized {
+            voiceFnTapSession.setEnabled(wantsFnTap)
+            return powerKeySuppressed
+        }
+        voiceFnTapSession.setEnabled(false)
+        guard voiceFunctionMapper.didReachDevice else {
+            // Nothing was reached, so nothing was learned. Falling back here would map the
+            // remote's F5 to the very modifier this app also injects: one key, two sources, two
+            // release paths — which is how it sticks, and with F5 still live underneath it is
+            // also how Cmd+F5 reaches macOS and toggles VoiceOver. Leave the mapping alone and
+            // let the retry aim for neutralisation again.
+            return powerKeySuppressed
+        }
+        // The remote was there and neutralisation still did not take, so this hardware cannot do
+        // it. Now the fallback is a conclusion rather than a guess.
+        settings.voiceFnTapModeEnabled = false
+        return applyVoiceFunctionMapping(neutralizeVoiceKey: false)
     }
 
     private func startHIDMonitors(powerKeySuppressed: Bool) {
@@ -1166,7 +1186,7 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
     /// calls cannot loop and no latch is required.
     func retryPowerKeyMappingWrite(reason: String) {
         guard started, settings.customMappingEnabled, !hidPowerKeySuppressed else { return }
-        guard applyVoiceFunctionMapping(neutralizeVoiceKey: lastNeutralizeVoiceKey) else {
+        guard writeVoiceFunctionMapping() else {
             AppLogger.shared.write("HID MAPPING WRITE pending reason=\(reason)")
             scheduleHIDMappingRetryIfNeeded()
             return
@@ -2592,9 +2612,6 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
 
     @discardableResult
     private func applyVoiceFunctionMapping(neutralizeVoiceKey: Bool) -> Bool {
-        // Recorded so a retry repeats this exact decision. Re-deriving it there would duplicate
-        // the branching in `applyHIDSettings` and let the two drift.
-        lastNeutralizeVoiceKey = neutralizeVoiceKey
         let applied = voiceFunctionMapper.apply(
             suppressPowerKey: settings.customMappingEnabled,
             neutralizeVoiceKey: neutralizeVoiceKey,

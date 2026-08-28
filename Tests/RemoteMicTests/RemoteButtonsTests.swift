@@ -1089,28 +1089,20 @@ struct RemoteButtonsTests {
         monitor.disconnectSimulatedDevice()
     }
 
-    @Test func powerSuppressionIsArmedBeforeButtonCallbacksAndMonitoring() throws {
+    /// The monitor must arm suppression for a button before it tells anyone the button was
+    /// pressed, or the native action escapes while the callback runs.
+    ///
+    /// The other half of this check — that the mapping is written before monitoring starts — used
+    /// to slice `applyHIDSettings` out of the source and compare snippet offsets. That moved into
+    /// `writeVoiceFunctionMapping`, and a text match would only have noticed the literal moving.
+    /// It is now asserted behaviourally in `HIDMappingRecoveryTests` by observing the order the
+    /// two log lines are actually written in.
+    @Test func powerSuppressionIsArmedBeforeButtonCallbacks() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let monitor = try String(contentsOf: root.appendingPathComponent("Sources/RemoteMic/HIDRemoteMonitor.swift"), encoding: .utf8)
-        let model = try String(contentsOf: root.appendingPathComponent("Sources/RemoteMic/BridgeAppModel.swift"), encoding: .utf8)
         let arm = try #require(monitor.range(of: "eventSuppressor.arm(button: button, edge: .down)"))
         let callback = try #require(monitor.range(of: "onButtonPressed?(profileID, deviceFingerprint, button)"))
-        let applySettingsStart = try #require(model.range(of: "func applyHIDSettings()"))
-        let applySettingsEnd = try #require(
-            model.range(
-                of: "func setExperimentalContinuousRecordingEnabled",
-                range: applySettingsStart.upperBound..<model.endIndex
-            )
-        )
-        let applySettings = model[applySettingsStart.lowerBound..<applySettingsEnd.lowerBound]
-        let map = try #require(
-            applySettings.range(of: "powerKeySuppressed = applyVoiceFunctionMapping(neutralizeVoiceKey: true)")
-        )
-        let start = try #require(
-            applySettings.range(of: "startHIDMonitors(powerKeySuppressed: powerKeySuppressed)")
-        )
         #expect(arm.lowerBound < callback.lowerBound)
-        #expect(map.lowerBound < start.lowerBound)
     }
 
     @Test func parsesRC003ReportOneUsages() {

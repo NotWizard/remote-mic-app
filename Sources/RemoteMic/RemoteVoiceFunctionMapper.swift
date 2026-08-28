@@ -136,6 +136,12 @@ final class RemoteVoiceFunctionMapper {
     private(set) var isPowerKeySuppressed = false
     private(set) var powerSuppressedLocationIDs: Set<UInt32>?
     private(set) var isVoiceKeyNeutralized = false
+    /// Whether the last `apply` found any of the remote's HID services.
+    ///
+    /// `false` means nothing was written and nothing was learned — in particular it is *not*
+    /// evidence that neutralising the voice key is impossible on this hardware. Conflating the
+    /// two is how a transient absence became a permanent downgrade.
+    private(set) var didReachDevice = false
 
     init(serviceProvider: @escaping ServiceProvider = RemoteVoiceFunctionMapper.systemServices) {
         self.serviceProvider = serviceProvider
@@ -151,11 +157,13 @@ final class RemoteVoiceFunctionMapper {
         let matchedCount = services.count
         guard matchedCount > 0 else {
             resetAppliedState()
+            didReachDevice = false
             AppLogger.shared.write(
                 "VOICE FN MAPPING applied=false neutralized=false power_suppressed=false matched=0"
             )
             return false
         }
+        didReachDevice = true
 
         var snapshots: [Int: [HIDUsageMapping]] = [:]
         var appliedIndices: [Int] = []
@@ -308,6 +316,8 @@ final class RemoteVoiceFunctionMapper {
         isPowerKeySuppressed = false
         powerSuppressedLocationIDs = nil
         isVoiceKeyNeutralized = false
+        // `didReachDevice` deliberately survives: a refused neutral write rolls back through
+        // here, and that rollback is evidence the remote answered, not evidence it was absent.
     }
 
     private static func systemServices() -> [RemoteVoiceMappingService] {

@@ -238,4 +238,157 @@ struct HIDMappingRecoveryTests {
         AppLogger.shared.flush()
         #expect(!sink.lines.contains { $0.hasPrefix("HID MAPPING WRITE") })
     }
+
+    /// The field regression that shipped in 1.8.25-fork.6.
+    ///
+    /// The remote's voice button is hardware F5. Injection modes map it to *nothing* so the app's
+    /// injected modifier is the only source. The fallback instead maps F5 to that same modifier —
+    /// one key, two sources, two release paths — which the code's own comment says sticks. With
+    /// the field log ending on `neutralized=false`, the user got VoiceOver toggling (Cmd+F5) and a
+    /// Mac where clicks behaved as Command-clicks.
+    ///
+    /// It was reached because a failed apply ends on its fallback attempt, and the retry replayed
+    /// that last attempt rather than the intent — so the first retry that succeeded made the
+    /// fallback permanent.
+    @MainActor
+    @Test func aWriteThatNeverReachedTheRemoteDoesNotDowngradeTheVoiceKey() throws {
+        let scope = try Self.scopedSettings("noDowngrade")
+        defer { scope.tearDown() }
+        scope.settings.voiceTriggerKey = .rightCommand
+
+        // Absent services on the first three attempts, then present — the field sequence.
+        final class Services: @unchecked Sendable {
+            private let lock = NSLock()
+            private var remaining: Int
+            private(set) var neutralAttempts: [Bool] = []
+            init(absentFor: Int) { remaining = absentFor }
+            func provide() -> [RemoteVoiceMappingService] {
+                lock.lock()
+                defer { lock.unlock() }
+                guard remaining <= 0 else {
+                    remaining -= 1
+                    return []
+                }
+                return [
+                    RemoteVoiceMappingService(
+                        registryID: 1,
+                        locationID: 42,
+                        readMappings: { [] },
+                        setMappings: { [weak self] mappings in
+                            let neutral = mappings.contains(
+                                RemoteVoiceFunctionMappingPolicy.neutralRemoteVoiceKey
+                            )
+                            self?.lock.lock()
+                            self?.neutralAttempts.append(neutral)
+                            self?.lock.unlock()
+                            return true
+                        }
+                    ),
+                ]
+            }
+        }
+        let services = Services(absentFor: 3)
+        let mapper = RemoteVoiceFunctionMapper { services.provide() }
+        let model = BridgeAppModel(
+            settings: scope.settings,
+            voiceFunctionMapper: mapper,
+            hidRuntimePermissions: { false }
+        )
+        defer { model.stop() }
+        model.started = true
+
+        // Three attempts while the remote's HID service is unregistered.
+        for _ in 0 ..< 3 {
+            model.retryPowerKeyMappingWrite(reason: "device_appeared")
+        }
+        // Nothing reached the remote, so nothing may have been concluded about it.
+        #expect(!mapper.didReachDevice)
+        #expect(services.neutralAttempts.isEmpty)
+
+        // Now it registers.
+        model.retryPowerKeyMappingWrite(reason: "device_appeared")
+
+        // The mapping that landed must be the neutral one, not the fallback.
+        #expect(mapper.didReachDevice)
+        #expect(mapper.isVoiceKeyNeutralized)
+        #expect(services.neutralAttempts.allSatisfy { $0 })
+    }
+
+    /// The fallback must still be available when it is a real conclusion: the remote was reached
+    /// and refused the neutral mapping. Without this the fix would just be "never fall back".
+    @MainActor
+    @Test func aRemoteThatRefusesTheNeutralMappingStillGetsTheFallback() throws {
+        let scope = try Self.scopedSettings("realFallback")
+        defer { scope.tearDown() }
+        scope.settings.voiceTriggerKey = .rightCommand
+
+        let accepted = Mutex<[Bool]>([])
+        let mapper = RemoteVoiceFunctionMapper {
+            [
+                RemoteVoiceMappingService(
+                    registryID: 1,
+                    locationID: 42,
+                    readMappings: { [] },
+                    setMappings: { mappings in
+                        let neutral = mappings.contains(
+                            RemoteVoiceFunctionMappingPolicy.neutralRemoteVoiceKey
+                        )
+                        // Reachable, but refuses to discard the voice key.
+                        guard !neutral else { return false }
+                        accepted.withLock { $0.append(neutral) }
+                        return true
+                    }
+                ),
+            ]
+        }
+        let model = BridgeAppModel(
+            settings: scope.settings,
+            voiceFunctionMapper: mapper,
+            hidRuntimePermissions: { false }
+        )
+        defer { model.stop() }
+        model.started = true
+
+        model.retryPowerKeyMappingWrite(reason: "device_appeared")
+
+        #expect(mapper.didReachDevice)
+        #expect(!mapper.isVoiceKeyNeutralized)
+        // The fallback was applied, which is correct here: this is a conclusion, not a guess.
+        #expect(accepted.withLock { $0 } == [false])
+    }
+
+    /// The mapping write must precede monitoring.
+    ///
+    /// If a monitor came up first, buttons would already be acted on while the power key was still
+    /// live. This replaces a check that sliced `applyHIDSettings` out of the source and compared
+    /// snippet offsets — that only noticed the literal moving, and did move when the decision was
+    /// extracted. Observing the order the lines are actually written catches a real reordering.
+    @MainActor
+    @Test func theMappingIsWrittenBeforeAnyMonitorStarts() throws {
+        let scope = try Self.scopedSettings("ordering")
+        defer { scope.tearDown() }
+        try Self.withModel(scope) { model, sink in
+            model.applyHIDSettings()
+            AppLogger.shared.flush()
+
+            let lines = sink.lines
+            let mapIndex = try #require(lines.firstIndex { $0.hasPrefix("VOICE FN MAPPING") })
+            let startIndex = try #require(lines.firstIndex { $0.hasPrefix("HID START") })
+            #expect(mapIndex < startIndex)
+        }
+    }
+}
+
+/// Minimal lock wrapper; the mapper's closures are not main-actor isolated.
+private final class Mutex<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Value
+
+    init(_ value: Value) { self.value = value }
+
+    func withLock<Result>(_ body: (inout Value) -> Result) -> Result {
+        lock.lock()
+        defer { lock.unlock() }
+        return body(&value)
+    }
 }
